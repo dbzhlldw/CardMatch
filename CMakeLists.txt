@@ -119,6 +119,7 @@ elseif(APPLE)
         list(APPEND GAME_SOURCE
              proj.ios_mac/mac/main.cpp
              proj.ios_mac/mac/Prefix.pch
+             Classes/platform/mac/ScreenHelper.mm
              ${APP_UI_RES}
              )
     endif()

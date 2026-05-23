@@ -9,7 +9,11 @@
 
 USING_NS_CC;
 
-const float GameScene::ANIM_DURATION = 0.25f;
+const float GameScene::DESIGN_WIDTH   = 1080.f;
+const float GameScene::DESIGN_HEIGHT  = 2080.f;
+const float GameScene::PILE_AREA_H    = 580.f;
+const float GameScene::TABLEAU_AREA_H = GameScene::DESIGN_HEIGHT - GameScene::PILE_AREA_H; // 1500
+const float GameScene::ANIM_DURATION  = 0.25f;
 
 Scene* GameScene::createScene() {
     return GameScene::create();
@@ -24,9 +28,10 @@ bool GameScene::init() {
     _model->setupGame();
     _controller->init();
 
-    // 固定区域位置（分辨率 1080×2080，底部 580px 为手牌区）
-    _handPilePos = Vec2(300, 290);
-    _reservePos  = Vec2(780, 290);
+    // 堆牌区三列横排：手牌堆 | 备用牌 | 回退按钮
+    float pileAreaCenterY = PILE_AREA_H / 2.f; // 290
+    _handPilePos = Vec2(DESIGN_WIDTH * 0.22f, pileAreaCenterY);
+    _reservePos  = Vec2(DESIGN_WIDTH * 0.50f, pileAreaCenterY);
 
     setupHandPile();
     setupReserve();
@@ -49,10 +54,6 @@ void GameScene::setupHandPile() {
         _handViewStack.push_back(view);
     }
     refreshHandPileDisplay();
-
-    auto label = Label::createWithSystemFont("手牌堆", "Arial", 36);
-    label->setPosition(_handPilePos + Vec2(0, -CardView::CARD_SIZE.height / 2 - 30));
-    addChild(label, 20);
 }
 
 void GameScene::setupReserve() {
@@ -72,10 +73,6 @@ void GameScene::setupReserve() {
             [this](CardView* v){ onReserveClicked(v); });
     }
     refreshReserveDisplay();
-
-    auto label = Label::createWithSystemFont("备用牌", "Arial", 36);
-    label->setPosition(_reservePos + Vec2(0, -CardView::CARD_SIZE.height / 2 - 30));
-    addChild(label, 20);
 }
 
 void GameScene::setupTableau() {
@@ -83,8 +80,8 @@ void GameScene::setupTableau() {
     int   count   = (int)tableau.size();
     float spacing = 280.f;
     float totalW  = spacing * (count - 1);
-    float startX  = (1080.f - totalW) / 2.f;
-    float y       = 1350.f;
+    float startX  = (DESIGN_WIDTH - totalW) / 2.f;
+    float y       = PILE_AREA_H + TABLEAU_AREA_H * 0.51f; // 主牌区约51%高度处
 
     for (int i = 0; i < count; i++) {
         auto view = CardView::create(tableau[i]);
@@ -97,11 +94,29 @@ void GameScene::setupTableau() {
 }
 
 void GameScene::setupUndoButton() {
-    auto btn = Label::createWithSystemFont("[撤回]", "Arial", 60);
-    btn->setColor(Color3B(255, 200, 50));
-    btn->setPosition(Vec2(540, 100));
+    const Vec2  btnPos(DESIGN_WIDTH * 0.78f, PILE_AREA_H / 2.f);
+    const float TARGET_SIZE  = 160.f; // 按钮显示尺寸（设计单位）
+    const float SHADOW_OFFSET = 8.f;  // 阴影偏移量
+
+    // 阴影：同一张图染黑、半透明、往右下偏移
+    auto shadow = Sprite::create("res/other/undo_blue.png");
+    if (!shadow) { CCLOG("undo_blue.png not found"); return; }
+    float scale = TARGET_SIZE / shadow->getContentSize().width;
+    shadow->setScale(scale);
+    shadow->setAnchorPoint(Vec2(0.5f, 0.5f));
+    shadow->setPosition(btnPos + Vec2(SHADOW_OFFSET, -SHADOW_OFFSET));
+    shadow->setColor(Color3B(0, 0, 0));
+    shadow->setOpacity(90);
+    addChild(shadow, 19);
+
+    // 主按钮
+    auto btn = Sprite::create("res/other/undo_blue.png");
+    btn->setScale(scale);
+    btn->setAnchorPoint(Vec2(0.5f, 0.5f));
+    btn->setPosition(btnPos);
     addChild(btn, 20);
 
+    // 触摸事件
     auto listener = EventListenerTouchOneByOne::create();
     listener->setSwallowTouches(true);
     listener->onTouchBegan = [btn](Touch* t, Event*) -> bool {

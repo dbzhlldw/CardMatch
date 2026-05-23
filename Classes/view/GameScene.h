@@ -14,6 +14,12 @@ public:
     bool init() override;
     CREATE_FUNC(GameScene);
 
+    // 设计分辨率与区域划分
+    static const float DESIGN_WIDTH;
+    static const float DESIGN_HEIGHT;
+    static const float PILE_AREA_H;
+    static const float TABLEAU_AREA_H;
+
 private:
     GameModel*      _model      = nullptr;
     GameController* _controller = nullptr;
