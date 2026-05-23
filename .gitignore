@@ -1,0 +1,27 @@
+# Build output
+build_mac/
+build/
+bin/
+*.xcuserstate
+
+# Xcode user data
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+DerivedData/
+
+# macOS
+.DS_Store
+**/.DS_Store
+
+# CMake cache
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+install_manifest.txt
+
+# Compiled objects
+*.o
+*.a
+*.dylib
+*.so
