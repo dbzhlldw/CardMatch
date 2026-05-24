@@ -25,3 +25,5 @@ install_manifest.txt
 *.a
 *.dylib
 *.so
+
+CLAUDE.md
