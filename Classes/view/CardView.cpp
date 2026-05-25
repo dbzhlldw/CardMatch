@@ -37,32 +37,27 @@ void CardView::buildFace() {
     _background->setPosition(CARD_SIZE.width / 2, CARD_SIZE.height / 2);
     _faceNode->addChild(_background, 0);
 
-    // 大数字
+    // 大数字（居中偏下，不再配大花色）
     _bigNumber = Sprite::create(bigNumberPath());
     if (_bigNumber) {
-        _bigNumber->setPosition(CARD_SIZE.width / 2, CARD_SIZE.height / 2 + 20);
+        _bigNumber->setPosition(CARD_SIZE.width / 2, CARD_SIZE.height / 2 - 30);
         _faceNode->addChild(_bigNumber, 1);
     }
 
-    // 大花色
-    _suitIcon = Sprite::create(suitPath());
-    if (_suitIcon) {
-        _suitIcon->setPosition(CARD_SIZE.width / 2, CARD_SIZE.height / 2 - 65);
-        _faceNode->addChild(_suitIcon, 1);
-    }
-
-    // 左上角小数字
+    // 左上角小数字（带 padding）
+    // 小数字图片 38×46，anchor 默认 0.5；x=38 距左边约 19px，y 距顶边约 18px
     _smallNumber = Sprite::create(smallNumberPath());
     if (_smallNumber) {
-        _smallNumber->setPosition(28, CARD_SIZE.height - 28);
+        _smallNumber->setPosition(38, CARD_SIZE.height - 40);
         _faceNode->addChild(_smallNumber, 2);
     }
 
-    // 左上角小花色
+    // 右上角小花色（唯一的花色元素）
+    // 花色图片 43×43，scale=1.0 → 43×43，与左上角小数字（38×46）接近
     _smallSuit = Sprite::create(suitPath());
     if (_smallSuit) {
-        _smallSuit->setScale(0.7f);
-        _smallSuit->setPosition(28, CARD_SIZE.height - 60);
+        _smallSuit->setScale(1.0f);
+        _smallSuit->setPosition(CARD_SIZE.width - 38, CARD_SIZE.height - 40);
         _faceNode->addChild(_smallSuit, 2);
     }
 

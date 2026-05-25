@@ -33,8 +33,9 @@ bool GameScene::init() {
 
     float pileAreaCenterY = PILE_AREA_H / 2.f;
     // _reservePos 是备用牌堆顶牌的固定锚点（最右侧）
-    _reservePos  = Vec2(DESIGN_WIDTH * 0.22f, pileAreaCenterY); // 左
-    _handPilePos = Vec2(DESIGN_WIDTH * 0.50f, pileAreaCenterY); // 中
+    // 两者关于屏幕中线 (0.50) 对称：0.35 + 0.65 = 1.00
+    _reservePos  = Vec2(DESIGN_WIDTH * 0.35f, pileAreaCenterY); // 左
+    _handPilePos = Vec2(DESIGN_WIDTH * 0.65f, pileAreaCenterY); // 右
 
     // 堆牌区灰色背景
     auto bg = LayerColor::create(Color4B(110, 110, 110, 255), DESIGN_WIDTH, PILE_AREA_H);
@@ -101,7 +102,7 @@ void GameScene::setupTableau() {
 }
 
 void GameScene::setupUndoButton() {
-    const Vec2  btnPos(DESIGN_WIDTH * 0.78f, PILE_AREA_H / 2.f); // 最右侧
+    const Vec2  btnPos(DESIGN_WIDTH * 0.88f, PILE_AREA_H / 2.f); // 最右侧
     const float TARGET_SIZE   = 160.f;
     const float SHADOW_OFFSET = 8.f;
 
@@ -179,11 +180,13 @@ void GameScene::onReserveClicked(CardView* view) {
         _reserveViewStack.end());
 
     // 剩余备用牌整体向右移动，保持新顶牌在 _reservePos
+    // stopAllActions() 防止快速连点时多个 MoveTo 叠加导致牌飞远
     {
         int n = (int)_reserveViewStack.size();
         for (int i = 0; i < n; i++) {
             int fromTop = n - 1 - i;
             Vec2 newPos = _reservePos - Vec2(fromTop * RESERVE_STACK_OFFSET, 0);
+            _reserveViewStack[i]->stopAllActions();
             _reserveViewStack[i]->runAction(MoveTo::create(ANIM_DURATION, newPos));
         }
     }
@@ -221,8 +224,8 @@ void GameScene::onUndoClicked() {
 
     if (record.returnToTableau) {
         view->setFaceUp(true);
-        view->setLocalZOrder(5);
-        view->runAction(MoveTo::create(ANIM_DURATION, record.returnPos));
+        // 保持高 z 直到动画结束，避免下面的牌瞬间压上来
+        view->setLocalZOrder(60);
 
         int idx = record.tableauIndex;
         if (idx >= (int)_tableauViews.size())
@@ -231,21 +234,34 @@ void GameScene::onUndoClicked() {
             _tableauViews.insert(_tableauViews.begin() + idx, view);
 
         view->setClickCallback([this](CardView* v){ onTableauCardClicked(v); });
+
+        auto seq = Sequence::create(
+            MoveTo::create(ANIM_DURATION, record.returnPos),
+            CallFunc::create([view]() { view->setLocalZOrder(5); }), // 到位后恢复桌面牌 z
+            nullptr);
+        view->runAction(seq);
     } else {
         // 现有备用牌整体向左移动，为归回的顶牌腾出锚点位置
         int n = (int)_reserveViewStack.size();
         for (int i = 0; i < n; i++) {
             int fromTop = n - i; // 归回后此牌 fromTop 为 n-i
             Vec2 newPos = _reservePos - Vec2(fromTop * RESERVE_STACK_OFFSET, 0);
+            _reserveViewStack[i]->stopAllActions(); // 防止快速撤回时动画叠加
             _reserveViewStack[i]->runAction(MoveTo::create(ANIM_DURATION, newPos));
         }
 
-        // 归回的牌动画回锚点（_reservePos）
-        view->setLocalZOrder(10 + n);
-        view->runAction(MoveTo::create(ANIM_DURATION, record.returnPos)); // = _reservePos
+        // 归回的牌动画期间保持高 z，到位后设为正确的堆叠层级
+        view->setLocalZOrder(60);
+        int finalZ = 10 + n;
 
         _reserveViewStack.push_back(view);
         view->setClickCallback([this](CardView* v){ onReserveClicked(v); });
+
+        auto seq = Sequence::create(
+            MoveTo::create(ANIM_DURATION, record.returnPos),
+            CallFunc::create([view, finalZ]() { view->setLocalZOrder(finalZ); }),
+            nullptr);
+        view->runAction(seq);
     }
 
     refreshHandPileDisplay();
