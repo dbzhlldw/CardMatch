@@ -26,6 +26,9 @@ public:
 
     bool canUndo() const { return !_history.empty(); }
 
+    // 当前手牌顶是否可与该桌面牌匹配（含遮挡/面朝上检查）
+    bool canMatchTableau(CardModel* tableauCard) const;
+
 private:
     GameController() = default;
     static GameController* _instance;

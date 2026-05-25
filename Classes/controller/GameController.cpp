@@ -21,10 +21,15 @@ bool GameController::canMatch(CardModel* a, CardModel* b) const {
     return std::abs(a->getValue() - b->getValue()) == 1;
 }
 
-MatchCommand* GameController::tryMatch(CardModel* tableauCard) {
+bool GameController::canMatchTableau(CardModel* tableauCard) const {
     auto handTop = _model->getHandTop();
-    if (!handTop || !tableauCard->isFaceUp()) return nullptr;
-    if (!canMatch(tableauCard, handTop))       return nullptr;
+    if (!handTop || !tableauCard->isFaceUp()) return false;
+    if (!tableauCard->isAccessible())          return false;
+    return canMatch(tableauCard, handTop);
+}
+
+MatchCommand* GameController::tryMatch(CardModel* tableauCard) {
+    if (!canMatchTableau(tableauCard)) return nullptr;
 
     int idx = _model->getTableauIndex(tableauCard);
     if (idx < 0) return nullptr;

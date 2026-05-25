@@ -2,7 +2,6 @@
 #include "cocos2d.h"
 #include <vector>
 #include <unordered_map>
-#include <functional>
 #include "data/LayoutDef.h"
 
 class CardView;
@@ -10,13 +9,13 @@ class CardModel;
 class GameModel;
 class GameController;
 
+// 主场景：View 完全由 GameModel 驱动，每次操作后重建牌堆归属并重算布局
 class GameScene : public cocos2d::Scene {
 public:
     static cocos2d::Scene* createScene();
     bool init() override;
     CREATE_FUNC(GameScene);
 
-    // 设计分辨率与区域划分
     static const float DESIGN_WIDTH;
     static const float DESIGN_HEIGHT;
     static const float PILE_AREA_H;
@@ -26,44 +25,48 @@ private:
     GameModel*      _model      = nullptr;
     GameController* _controller = nullptr;
 
-    // 桌面牌视图列表（仅记录顺序，真正布局位置由 LayoutDef 决定）
-    std::vector<CardView*> _tableauViews;
+    LayoutDef _layout;
 
-    // 快速查找：CardModel* → CardView*
+    // CardModel* → CardView*（全生命周期不变）
     std::unordered_map<CardModel*, CardView*> _cardViewMap;
+    // 发牌时槽位索引，用于桌面牌定位（不随 remove/insert 改变）
+    std::unordered_map<CardModel*, int> _cardSlotIndex;
 
-    // 手牌堆和备用牌堆各自的视图栈
+    // 由 rebuildViewStacksFromModel() 从 Model 重建，不做手动增删
+    std::vector<CardView*> _tableauViews;
     std::vector<CardView*> _handViewStack;
     std::vector<CardView*> _reserveViewStack;
 
-    // 固定位置
     cocos2d::Vec2 _handPilePos;
     cocos2d::Vec2 _reservePos;
 
-    // 动画记录，用于撤回
-    struct MoveRecord {
-        CardView*      view;
-        cocos2d::Vec2  returnPos;       // 撤回时动画回到此处
-        bool           returnToTableau;
-        int            tableauIndex;    // returnToTableau 为 true 时有效
-        CardView*      prevHandTop;     // 此次移动前的手牌堆顶视图
-        int            returnZOrder;    // 撤回后恢复的 z-order（按行层级）
-    };
-    std::vector<MoveRecord> _animHistory;
+    bool      _inputLocked   = false;
+    CardView* _touchTarget   = nullptr;
 
     static const float ANIM_DURATION;
+    static const float RESERVE_STACK_OFFSET;
+    static const int   FLYING_Z_ORDER;
 
-    void setupTableau(const LayoutDef& layout);
-    void setupHandPile();
-    void setupReserve();
+    void createAllCardViews();
     void setupUndoButton();
+    void setupSceneTouch();
 
     void onTableauCardClicked(CardView* view);
-    void onReserveClicked(CardView* view);
+    void onReserveClicked();
     void onUndoClicked();
 
-    // 让手牌堆所有牌可见，更新 z-order
-    void refreshHandPileDisplay();
-    // 让备用牌堆所有牌可见，更新 z-order；非顶牌清除回调
-    void refreshReserveDisplay();
+    void rebuildViewStacksFromModel();
+    void applyAllLayouts(bool animate, CardView* flyingView = nullptr);
+    void syncAllInteractable();
+
+    cocos2d::Vec2 handPositionFor(int index) const;
+    cocos2d::Vec2 reservePositionFor(int index, int total) const;
+    cocos2d::Vec2 slotPositionFor(CardModel* card) const;
+    int           slotZOrderFor(CardModel* card) const;
+
+    CardView* hitTestTableau(const cocos2d::Vec2& scenePos) const;
+    CardView* hitTestReserveTop(const cocos2d::Vec2& scenePos) const;
+
+    void lockInput();
+    void unlockInput();
 };

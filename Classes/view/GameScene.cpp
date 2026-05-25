@@ -3,21 +3,18 @@
 #include "model/GameModel.h"
 #include "model/CardModel.h"
 #include "controller/GameController.h"
-#include "controller/command/MatchCommand.h"
-#include "controller/command/DrawCommand.h"
 #include "data/LayoutDef.h"
 #include <algorithm>
 
 USING_NS_CC;
 
-const float GameScene::DESIGN_WIDTH   = 1080.f;
-const float GameScene::DESIGN_HEIGHT  = 2080.f;
-const float GameScene::PILE_AREA_H    = 580.f;
-const float GameScene::TABLEAU_AREA_H = GameScene::DESIGN_HEIGHT - GameScene::PILE_AREA_H;
-const float GameScene::ANIM_DURATION  = 0.25f;
-
-// 备用牌堆每张牌的水平偏移
-static const float RESERVE_STACK_OFFSET = 15.f;
+const float GameScene::DESIGN_WIDTH        = 1080.f;
+const float GameScene::DESIGN_HEIGHT       = 2080.f;
+const float GameScene::PILE_AREA_H         = 580.f;
+const float GameScene::TABLEAU_AREA_H        = GameScene::DESIGN_HEIGHT - GameScene::PILE_AREA_H;
+const float GameScene::ANIM_DURATION       = 0.25f;
+const float GameScene::RESERVE_STACK_OFFSET = 15.f;
+const int   GameScene::FLYING_Z_ORDER      = 200;
 
 Scene* GameScene::createScene() {
     return GameScene::create();
@@ -29,76 +26,56 @@ bool GameScene::init() {
     _model      = GameModel::getInstance();
     _controller = GameController::getInstance();
 
-    _model->setupGame(Layouts::PYRAMID);
+    _layout = Layouts::PYRAMID;
+    _model->setupGame(_layout);
     _controller->init();
 
     float pileAreaCenterY = PILE_AREA_H / 2.f;
     _reservePos  = Vec2(DESIGN_WIDTH * 0.35f, pileAreaCenterY);
     _handPilePos = Vec2(DESIGN_WIDTH * 0.65f, pileAreaCenterY);
 
-    // 堆牌区灰色背景
     auto bg = LayerColor::create(Color4B(110, 110, 110, 255), DESIGN_WIDTH, PILE_AREA_H);
     bg->setPosition(Vec2::ZERO);
     addChild(bg, -1);
 
-    setupHandPile();
-    setupReserve();
-    setupTableau(Layouts::PYRAMID);
+    createAllCardViews();
+    rebuildViewStacksFromModel();
+    applyAllLayouts(false);
+    syncAllInteractable();
     setupUndoButton();
+    setupSceneTouch();
 
     return true;
 }
 
 // ---------------------------------------------------------------------------
-// 初始布局
+// 初始化
 // ---------------------------------------------------------------------------
 
-void GameScene::setupHandPile() {
-    const auto& hand = _model->getHand();
-    for (int i = 0; i < (int)hand.size(); i++) {
-        auto view = CardView::create(hand[i]);
-        view->setAnchorPoint(Vec2(0.5f, 0.5f));
-        view->setPosition(_handPilePos);
-        addChild(view, 10 + i);
-        _handViewStack.push_back(view);
-    }
-}
-
-void GameScene::setupReserve() {
-    const auto& reserve = _model->getReserve();
-    int n = (int)reserve.size();
-    for (int i = 0; i < n; i++) {
-        int fromTop = n - 1 - i;
-        auto view = CardView::create(reserve[i]);
-        view->setFaceUp(true); // 备用牌堆显示正面
-        view->setAnchorPoint(Vec2(0.5f, 0.5f));
-        view->setPosition(_reservePos - Vec2(fromTop * RESERVE_STACK_OFFSET, 0));
-        addChild(view, 10 + i);
-        _reserveViewStack.push_back(view);
-    }
-    if (!_reserveViewStack.empty()) {
-        _reserveViewStack.back()->setClickCallback(
-            [this](CardView* v){ onReserveClicked(v); });
-    }
-}
-
-void GameScene::setupTableau(const LayoutDef& layout) {
+void GameScene::createAllCardViews() {
     const auto& tableau = _model->getTableau();
-    int count = (int)tableau.size();
+    for (int i = 0; i < (int)tableau.size(); i++) {
+        CardModel* card = tableau[i];
+        _cardSlotIndex[card] = i;
 
-    for (int i = 0; i < count; i++) {
-        const SlotDef& slot = layout[i];
-        auto view = CardView::create(tableau[i]);
+        auto view = CardView::create(card);
         view->setAnchorPoint(Vec2(0.5f, 0.5f));
-        view->setPosition(slot.x, slot.y);
-        view->setLocalZOrder(slot.zOrder);
-        // 全部正面朝上；只有可操作（无遮挡）的牌注册点击回调
-        if (tableau[i]->isAccessible()) {
-            view->setClickCallback([this](CardView* v){ onTableauCardClicked(v); });
-        }
-        addChild(view, slot.zOrder);
-        _tableauViews.push_back(view);
-        _cardViewMap[tableau[i]] = view;
+        addChild(view, _layout[i].zOrder);
+        _cardViewMap[card] = view;
+    }
+
+    for (auto* card : _model->getHand()) {
+        auto view = CardView::create(card);
+        view->setAnchorPoint(Vec2(0.5f, 0.5f));
+        addChild(view, 10);
+        _cardViewMap[card] = view;
+    }
+
+    for (auto* card : _model->getReserve()) {
+        auto view = CardView::create(card);
+        view->setAnchorPoint(Vec2(0.5f, 0.5f));
+        addChild(view, 10);
+        _cardViewMap[card] = view;
     }
 }
 
@@ -135,177 +112,232 @@ void GameScene::setupUndoButton() {
     _eventDispatcher->addEventListenerWithSceneGraphPriority(listener, btn);
 }
 
+void GameScene::setupSceneTouch() {
+    auto listener = EventListenerTouchOneByOne::create();
+    listener->setSwallowTouches(true);
+
+    listener->onTouchBegan = [this](Touch* t, Event*) -> bool {
+        if (_inputLocked) return false;
+
+        Vec2 pos = t->getLocation();
+        if (auto* reserveTop = hitTestReserveTop(pos)) {
+            _touchTarget = reserveTop;
+            return true;
+        }
+        if (auto* tableau = hitTestTableau(pos)) {
+            _touchTarget = tableau;
+            return true;
+        }
+        return false;
+    };
+
+    listener->onTouchEnded = [this](Touch* t, Event*) {
+        if (!_touchTarget || _inputLocked) {
+            _touchTarget = nullptr;
+            return;
+        }
+        Vec2 pos = t->getLocation();
+        CardView* hit = hitTestReserveTop(pos);
+        if (!hit) hit = hitTestTableau(pos);
+        if (hit == _touchTarget) {
+            if (std::find(_reserveViewStack.begin(), _reserveViewStack.end(), hit)
+                != _reserveViewStack.end()) {
+                onReserveClicked();
+            } else {
+                onTableauCardClicked(hit);
+            }
+        }
+        _touchTarget = nullptr;
+    };
+
+    _eventDispatcher->addEventListenerWithSceneGraphPriority(listener, this);
+}
+
+// ---------------------------------------------------------------------------
+// Model 驱动的 View 同步
+// ---------------------------------------------------------------------------
+
+void GameScene::rebuildViewStacksFromModel() {
+    _handViewStack.clear();
+    _reserveViewStack.clear();
+    _tableauViews.clear();
+
+    for (auto* card : _model->getHand()) {
+        auto it = _cardViewMap.find(card);
+        if (it != _cardViewMap.end()) _handViewStack.push_back(it->second);
+    }
+    for (auto* card : _model->getReserve()) {
+        auto it = _cardViewMap.find(card);
+        if (it != _cardViewMap.end()) _reserveViewStack.push_back(it->second);
+    }
+    for (auto* card : _model->getTableau()) {
+        auto it = _cardViewMap.find(card);
+        if (it != _cardViewMap.end()) _tableauViews.push_back(it->second);
+    }
+}
+
+Vec2 GameScene::handPositionFor(int /*index*/) const {
+    return _handPilePos;
+}
+
+Vec2 GameScene::reservePositionFor(int index, int total) const {
+    int fromTop = total - 1 - index;
+    return _reservePos - Vec2(fromTop * RESERVE_STACK_OFFSET, 0.f);
+}
+
+Vec2 GameScene::slotPositionFor(CardModel* card) const {
+    auto it = _cardSlotIndex.find(card);
+    if (it == _cardSlotIndex.end()) return Vec2::ZERO;
+    const SlotDef& slot = _layout[it->second];
+    return Vec2(slot.x, slot.y);
+}
+
+int GameScene::slotZOrderFor(CardModel* card) const {
+    auto it = _cardSlotIndex.find(card);
+    if (it == _cardSlotIndex.end()) return 0;
+    return _layout[it->second].zOrder;
+}
+
+void GameScene::applyAllLayouts(bool animate, CardView* flyingView) {
+    const auto& hand    = _model->getHand();
+    const auto& reserve = _model->getReserve();
+    const auto& tableau = _model->getTableau();
+    const int   rn      = (int)reserve.size();
+
+    auto place = [&](CardView* view, const Vec2& target, int finalZ, bool faceUp) {
+        view->stopAllActions();
+        view->setFaceUp(faceUp);
+        view->setVisible(true);
+
+        bool isFlying = animate && flyingView && view == flyingView;
+        view->setLocalZOrder(isFlying ? FLYING_Z_ORDER : finalZ);
+
+        bool needsMove = view->getPosition().distance(target) > 1.f;
+        if (animate && needsMove) {
+            if (isFlying) {
+                view->runAction(Sequence::create(
+                    MoveTo::create(ANIM_DURATION, target),
+                    CallFunc::create([view, finalZ]() { view->setLocalZOrder(finalZ); }),
+                    nullptr));
+            } else {
+                view->runAction(MoveTo::create(ANIM_DURATION, target));
+            }
+        } else {
+            view->setPosition(target);
+        }
+    };
+
+    for (int i = 0; i < (int)hand.size(); i++)
+        place(_cardViewMap[hand[i]], handPositionFor(i), 10 + i, true);
+
+    for (int i = 0; i < rn; i++)
+        place(_cardViewMap[reserve[i]], reservePositionFor(i, rn), 10 + i, true);
+
+    for (auto* card : tableau)
+        place(_cardViewMap[card], slotPositionFor(card), slotZOrderFor(card), true);
+}
+
+void GameScene::syncAllInteractable() {
+    // 桌面/备用牌堆的点击由 Scene 级 hit-test 处理，清除所有 CardView 回调
+    for (auto& kv : _cardViewMap)
+        kv.second->setClickCallback(nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// Hit test（按 z-order 从高到低，优先点中最上层可操作的牌）
+// ---------------------------------------------------------------------------
+
+CardView* GameScene::hitTestTableau(const Vec2& scenePos) const {
+    struct Entry { CardView* view; bool matchable; int z; };
+    std::vector<Entry> hits;
+
+    for (auto* card : _model->getTableau()) {
+        if (!card->isAccessible()) continue;
+        auto it = _cardViewMap.find(card);
+        if (it == _cardViewMap.end()) continue;
+
+        CardView* view = it->second;
+        Vec2 local = view->convertToNodeSpace(scenePos);
+        Rect bounds(0, 0, CardView::CARD_SIZE.width, CardView::CARD_SIZE.height);
+        if (!bounds.containsPoint(local)) continue;
+
+        hits.push_back({ view, _controller->canMatchTableau(card), view->getLocalZOrder() });
+    }
+
+    if (hits.empty()) return nullptr;
+
+    // 优先：可匹配 + z 最高；其次：任意可操作 + z 最高
+    auto best = [&](bool requireMatchable) -> CardView* {
+        CardView* pick = nullptr;
+        int bestZ = -1;
+        for (const auto& e : hits) {
+            if (requireMatchable && !e.matchable) continue;
+            if (e.z > bestZ) { bestZ = e.z; pick = e.view; }
+        }
+        return pick;
+    };
+
+    if (CardView* v = best(true)) return v;
+    return best(false);
+}
+
+CardView* GameScene::hitTestReserveTop(const Vec2& scenePos) const {
+    if (_model->getReserveSize() == 0 || _reserveViewStack.empty()) return nullptr;
+    CardView* top = _reserveViewStack.back();
+    Vec2 local = top->convertToNodeSpace(scenePos);
+    Rect bounds(0, 0, CardView::CARD_SIZE.width, CardView::CARD_SIZE.height);
+    if (bounds.containsPoint(local)) return top;
+    return nullptr;
+}
+
 // ---------------------------------------------------------------------------
 // 用户交互
 // ---------------------------------------------------------------------------
 
-void GameScene::onTableauCardClicked(CardView* view) {
-    CardView* prevHandTop = _handViewStack.empty() ? nullptr : _handViewStack.back();
-    Vec2      returnPos   = view->getPosition();
-    int       returnZ     = view->getLocalZOrder();
-
-    MatchCommand* cmd = _controller->tryMatch(view->getModel());
-    if (!cmd) return;
-
-    int newIdx = (int)_handViewStack.size();
-
-    _animHistory.push_back({ view, returnPos, true,
-                              cmd->getTableauIndex(), prevHandTop, returnZ });
-
-    _tableauViews.erase(
-        std::remove(_tableauViews.begin(), _tableauViews.end(), view),
-        _tableauViews.end());
-
-    // 注册因此次匹配而解锁的桌面牌的点击回调
-    for (auto* newCard : cmd->getNewlyUnblocked()) {
-        auto it = _cardViewMap.find(newCard);
-        if (it != _cardViewMap.end()) {
-            it->second->setClickCallback([this](CardView* cv){ onTableauCardClicked(cv); });
-        }
-    }
-
-    _handViewStack.push_back(view);
-    refreshHandPileDisplay();
-    view->setLocalZOrder(60); // 动画期间置于最顶层
-
-    auto seq = Sequence::create(
-        MoveTo::create(ANIM_DURATION, _handPilePos),
-        CallFunc::create([view, newIdx]() { view->setLocalZOrder(10 + newIdx); }),
-        nullptr);
-    view->runAction(seq);
+void GameScene::lockInput() {
+    _inputLocked = true;
+    unschedule("unlock_input");
 }
 
-void GameScene::onReserveClicked(CardView* view) {
-    CardView* prevHandTop = _handViewStack.empty() ? nullptr : _handViewStack.back();
+void GameScene::unlockInput() {
+    _inputLocked = false;
+}
 
-    DrawCommand* cmd = _controller->tryDraw();
-    if (!cmd) return;
+void GameScene::onTableauCardClicked(CardView* view) {
+    if (_inputLocked) return;
 
-    Vec2 returnPos = _reservePos;
+    CardModel* card = view->getModel();
+    if (!card->isAccessible()) return;
+    if (!_controller->tryMatch(card)) return;
 
-    _animHistory.push_back({ view, returnPos, false, -1, prevHandTop, 0 });
+    lockInput();
+    rebuildViewStacksFromModel();
+    applyAllLayouts(true, _cardViewMap[_model->getHandTop()]);
+    syncAllInteractable();
+    scheduleOnce([this](float) { unlockInput(); }, ANIM_DURATION + 0.05f, "unlock_input");
+}
 
-    _reserveViewStack.erase(
-        std::remove(_reserveViewStack.begin(), _reserveViewStack.end(), view),
-        _reserveViewStack.end());
+void GameScene::onReserveClicked() {
+    if (_inputLocked) return;
+    if (!_controller->tryDraw()) return;
 
-    // 剩余备用牌整体右移，保持新顶牌在 _reservePos
-    {
-        int n = (int)_reserveViewStack.size();
-        for (int i = 0; i < n; i++) {
-            int fromTop = n - 1 - i;
-            Vec2 newPos = _reservePos - Vec2(fromTop * RESERVE_STACK_OFFSET, 0);
-            _reserveViewStack[i]->stopAllActions();
-            _reserveViewStack[i]->runAction(MoveTo::create(ANIM_DURATION, newPos));
-        }
-    }
-
-    if (!_reserveViewStack.empty()) {
-        _reserveViewStack.back()->setClickCallback(
-            [this](CardView* v){ onReserveClicked(v); });
-    }
-
-    int newHandIdx = (int)_handViewStack.size();
-
-    _handViewStack.push_back(view);
-    refreshHandPileDisplay();
-    refreshReserveDisplay();
-    view->setLocalZOrder(60);
-
-    auto seq = Sequence::create(
-        MoveTo::create(ANIM_DURATION, _handPilePos),
-        CallFunc::create([view, newHandIdx]() { view->setLocalZOrder(10 + newHandIdx); }),
-        nullptr);
-    view->runAction(seq);
+    lockInput();
+    rebuildViewStacksFromModel();
+    applyAllLayouts(true, _cardViewMap[_model->getHandTop()]);
+    syncAllInteractable();
+    scheduleOnce([this](float) { unlockInput(); }, ANIM_DURATION + 0.05f, "unlock_input");
 }
 
 void GameScene::onUndoClicked() {
-    if (_animHistory.empty() || !_controller->canUndo()) return;
+    if (_inputLocked || !_controller->canUndo()) return;
 
-    MoveRecord record = _animHistory.back();
-    _animHistory.pop_back();
+    CardModel* flyingCard = _model->getHandTop();
+    CardView*  flyingView = flyingCard ? _cardViewMap[flyingCard] : nullptr;
 
-    ICommand* undoneCmd = _controller->tryUndo();
-
-    _handViewStack.pop_back();
-
-    CardView* view = record.view;
-
-    if (record.returnToTableau) {
-        // 将因此次匹配被解锁的牌重新清除点击回调（它们又被遮挡了）
-        MatchCommand* matchCmd = dynamic_cast<MatchCommand*>(undoneCmd);
-        if (matchCmd) {
-            for (auto* reblocked : matchCmd->getNewlyUnblocked()) {
-                auto it = _cardViewMap.find(reblocked);
-                if (it != _cardViewMap.end()) {
-                    it->second->setClickCallback(nullptr);
-                }
-            }
-        }
-
-        view->setFaceUp(true); // 保证正面（本就应为正面）
-        view->setLocalZOrder(60); // 动画期间保持最顶，避免遮挡瞬变
-
-        int idx = record.tableauIndex;
-        if (idx >= (int)_tableauViews.size())
-            _tableauViews.push_back(view);
-        else
-            _tableauViews.insert(_tableauViews.begin() + idx, view);
-
-        view->setClickCallback([this](CardView* v){ onTableauCardClicked(v); });
-
-        int returnZ = record.returnZOrder;
-        auto seq = Sequence::create(
-            MoveTo::create(ANIM_DURATION, record.returnPos),
-            CallFunc::create([view, returnZ]() { view->setLocalZOrder(returnZ); }),
-            nullptr);
-        view->runAction(seq);
-    } else {
-        // 现有备用牌整体左移，为归回的顶牌腾出锚点位置
-        int n = (int)_reserveViewStack.size();
-        for (int i = 0; i < n; i++) {
-            int fromTop = n - i;
-            Vec2 newPos = _reservePos - Vec2(fromTop * RESERVE_STACK_OFFSET, 0);
-            _reserveViewStack[i]->stopAllActions();
-            _reserveViewStack[i]->runAction(MoveTo::create(ANIM_DURATION, newPos));
-        }
-
-        view->setLocalZOrder(60);
-        int finalZ = 10 + n;
-
-        _reserveViewStack.push_back(view);
-        view->setClickCallback([this](CardView* v){ onReserveClicked(v); });
-
-        auto seq = Sequence::create(
-            MoveTo::create(ANIM_DURATION, record.returnPos),
-            CallFunc::create([view, finalZ]() { view->setLocalZOrder(finalZ); }),
-            nullptr);
-        view->runAction(seq);
-    }
-
-    refreshHandPileDisplay();
-    refreshReserveDisplay();
-}
-
-// ---------------------------------------------------------------------------
-// 刷新显示
-// ---------------------------------------------------------------------------
-
-void GameScene::refreshHandPileDisplay() {
-    for (int i = 0; i < (int)_handViewStack.size(); i++) {
-        _handViewStack[i]->setLocalZOrder(10 + i);
-        _handViewStack[i]->setVisible(true);
-    }
-}
-
-void GameScene::refreshReserveDisplay() {
-    int n = (int)_reserveViewStack.size();
-    for (int i = 0; i < n; i++) {
-        _reserveViewStack[i]->setLocalZOrder(10 + i);
-        _reserveViewStack[i]->setVisible(true);
-    }
-    // 非顶牌清除回调，防止误触露出的边缘
-    for (int i = 0; i + 1 < n; i++) {
-        _reserveViewStack[i]->setClickCallback(nullptr);
-    }
+    lockInput();
+    _controller->tryUndo();
+    rebuildViewStacksFromModel();
+    applyAllLayouts(true, flyingView);
+    syncAllInteractable();
+    scheduleOnce([this](float) { unlockInput(); }, ANIM_DURATION + 0.05f, "unlock_input");
 }
