@@ -5,6 +5,7 @@
 #include "controller/GameController.h"
 #include "controller/command/MatchCommand.h"
 #include "controller/command/DrawCommand.h"
+#include "data/LayoutDef.h"
 #include <algorithm>
 
 USING_NS_CC;
@@ -15,7 +16,7 @@ const float GameScene::PILE_AREA_H    = 580.f;
 const float GameScene::TABLEAU_AREA_H = GameScene::DESIGN_HEIGHT - GameScene::PILE_AREA_H;
 const float GameScene::ANIM_DURATION  = 0.25f;
 
-// 备用牌堆每张牌的水平偏移：顶牌在最右（锚点），下面的牌依次向左
+// 备用牌堆每张牌的水平偏移
 static const float RESERVE_STACK_OFFSET = 15.f;
 
 Scene* GameScene::createScene() {
@@ -28,14 +29,12 @@ bool GameScene::init() {
     _model      = GameModel::getInstance();
     _controller = GameController::getInstance();
 
-    _model->setupGame();
+    _model->setupGame(Layouts::PYRAMID);
     _controller->init();
 
     float pileAreaCenterY = PILE_AREA_H / 2.f;
-    // _reservePos 是备用牌堆顶牌的固定锚点（最右侧）
-    // 两者关于屏幕中线 (0.50) 对称：0.35 + 0.65 = 1.00
-    _reservePos  = Vec2(DESIGN_WIDTH * 0.35f, pileAreaCenterY); // 左
-    _handPilePos = Vec2(DESIGN_WIDTH * 0.65f, pileAreaCenterY); // 右
+    _reservePos  = Vec2(DESIGN_WIDTH * 0.35f, pileAreaCenterY);
+    _handPilePos = Vec2(DESIGN_WIDTH * 0.65f, pileAreaCenterY);
 
     // 堆牌区灰色背景
     auto bg = LayerColor::create(Color4B(110, 110, 110, 255), DESIGN_WIDTH, PILE_AREA_H);
@@ -44,7 +43,7 @@ bool GameScene::init() {
 
     setupHandPile();
     setupReserve();
-    setupTableau();
+    setupTableau(Layouts::PYRAMID);
     setupUndoButton();
 
     return true;
@@ -59,7 +58,7 @@ void GameScene::setupHandPile() {
     for (int i = 0; i < (int)hand.size(); i++) {
         auto view = CardView::create(hand[i]);
         view->setAnchorPoint(Vec2(0.5f, 0.5f));
-        view->setPosition(_handPilePos); // 手牌堆无偏移，所有牌叠在同一位置
+        view->setPosition(_handPilePos);
         addChild(view, 10 + i);
         _handViewStack.push_back(view);
     }
@@ -69,9 +68,9 @@ void GameScene::setupReserve() {
     const auto& reserve = _model->getReserve();
     int n = (int)reserve.size();
     for (int i = 0; i < n; i++) {
-        int fromTop = n - 1 - i; // 0 = 顶牌，越大越靠左
+        int fromTop = n - 1 - i;
         auto view = CardView::create(reserve[i]);
-        view->setFaceUp(true); // 备用牌堆直接显示正面
+        view->setFaceUp(true); // 备用牌堆显示正面
         view->setAnchorPoint(Vec2(0.5f, 0.5f));
         view->setPosition(_reservePos - Vec2(fromTop * RESERVE_STACK_OFFSET, 0));
         addChild(view, 10 + i);
@@ -83,26 +82,28 @@ void GameScene::setupReserve() {
     }
 }
 
-void GameScene::setupTableau() {
+void GameScene::setupTableau(const LayoutDef& layout) {
     const auto& tableau = _model->getTableau();
-    int   count   = (int)tableau.size();
-    float spacing = 280.f;
-    float totalW  = spacing * (count - 1);
-    float startX  = (DESIGN_WIDTH - totalW) / 2.f;
-    float y       = PILE_AREA_H + TABLEAU_AREA_H * 0.51f;
+    int count = (int)tableau.size();
 
     for (int i = 0; i < count; i++) {
+        const SlotDef& slot = layout[i];
         auto view = CardView::create(tableau[i]);
         view->setAnchorPoint(Vec2(0.5f, 0.5f));
-        view->setPosition(startX + i * spacing, y);
-        view->setClickCallback([this](CardView* v){ onTableauCardClicked(v); });
-        addChild(view, 5);
+        view->setPosition(slot.x, slot.y);
+        view->setLocalZOrder(slot.zOrder);
+        // 全部正面朝上；只有可操作（无遮挡）的牌注册点击回调
+        if (tableau[i]->isAccessible()) {
+            view->setClickCallback([this](CardView* v){ onTableauCardClicked(v); });
+        }
+        addChild(view, slot.zOrder);
         _tableauViews.push_back(view);
+        _cardViewMap[tableau[i]] = view;
     }
 }
 
 void GameScene::setupUndoButton() {
-    const Vec2  btnPos(DESIGN_WIDTH * 0.88f, PILE_AREA_H / 2.f); // 最右侧
+    const Vec2  btnPos(DESIGN_WIDTH * 0.88f, PILE_AREA_H / 2.f);
     const float TARGET_SIZE   = 160.f;
     const float SHADOW_OFFSET = 8.f;
 
@@ -141,21 +142,31 @@ void GameScene::setupUndoButton() {
 void GameScene::onTableauCardClicked(CardView* view) {
     CardView* prevHandTop = _handViewStack.empty() ? nullptr : _handViewStack.back();
     Vec2      returnPos   = view->getPosition();
+    int       returnZ     = view->getLocalZOrder();
 
     MatchCommand* cmd = _controller->tryMatch(view->getModel());
     if (!cmd) return;
 
     int newIdx = (int)_handViewStack.size();
 
-    _animHistory.push_back({ view, returnPos, true, cmd->getTableauIndex(), prevHandTop });
+    _animHistory.push_back({ view, returnPos, true,
+                              cmd->getTableauIndex(), prevHandTop, returnZ });
 
     _tableauViews.erase(
         std::remove(_tableauViews.begin(), _tableauViews.end(), view),
         _tableauViews.end());
 
+    // 注册因此次匹配而解锁的桌面牌的点击回调
+    for (auto* newCard : cmd->getNewlyUnblocked()) {
+        auto it = _cardViewMap.find(newCard);
+        if (it != _cardViewMap.end()) {
+            it->second->setClickCallback([this](CardView* cv){ onTableauCardClicked(cv); });
+        }
+    }
+
     _handViewStack.push_back(view);
-    refreshHandPileDisplay();   // 更新 z-order
-    view->setLocalZOrder(60);   // 动画期间置于最顶层
+    refreshHandPileDisplay();
+    view->setLocalZOrder(60); // 动画期间置于最顶层
 
     auto seq = Sequence::create(
         MoveTo::create(ANIM_DURATION, _handPilePos),
@@ -170,17 +181,15 @@ void GameScene::onReserveClicked(CardView* view) {
     DrawCommand* cmd = _controller->tryDraw();
     if (!cmd) return;
 
-    // 顶牌的 returnPos 始终是 _reservePos（锚点）
     Vec2 returnPos = _reservePos;
 
-    _animHistory.push_back({ view, returnPos, false, -1, prevHandTop });
+    _animHistory.push_back({ view, returnPos, false, -1, prevHandTop, 0 });
 
     _reserveViewStack.erase(
         std::remove(_reserveViewStack.begin(), _reserveViewStack.end(), view),
         _reserveViewStack.end());
 
-    // 剩余备用牌整体向右移动，保持新顶牌在 _reservePos
-    // stopAllActions() 防止快速连点时多个 MoveTo 叠加导致牌飞远
+    // 剩余备用牌整体右移，保持新顶牌在 _reservePos
     {
         int n = (int)_reserveViewStack.size();
         for (int i = 0; i < n; i++) {
@@ -216,16 +225,26 @@ void GameScene::onUndoClicked() {
     MoveRecord record = _animHistory.back();
     _animHistory.pop_back();
 
-    _controller->tryUndo();
+    ICommand* undoneCmd = _controller->tryUndo();
 
     _handViewStack.pop_back();
 
     CardView* view = record.view;
 
     if (record.returnToTableau) {
-        view->setFaceUp(true);
-        // 保持高 z 直到动画结束，避免下面的牌瞬间压上来
-        view->setLocalZOrder(60);
+        // 将因此次匹配被解锁的牌重新清除点击回调（它们又被遮挡了）
+        MatchCommand* matchCmd = dynamic_cast<MatchCommand*>(undoneCmd);
+        if (matchCmd) {
+            for (auto* reblocked : matchCmd->getNewlyUnblocked()) {
+                auto it = _cardViewMap.find(reblocked);
+                if (it != _cardViewMap.end()) {
+                    it->second->setClickCallback(nullptr);
+                }
+            }
+        }
+
+        view->setFaceUp(true); // 保证正面（本就应为正面）
+        view->setLocalZOrder(60); // 动画期间保持最顶，避免遮挡瞬变
 
         int idx = record.tableauIndex;
         if (idx >= (int)_tableauViews.size())
@@ -235,22 +254,22 @@ void GameScene::onUndoClicked() {
 
         view->setClickCallback([this](CardView* v){ onTableauCardClicked(v); });
 
+        int returnZ = record.returnZOrder;
         auto seq = Sequence::create(
             MoveTo::create(ANIM_DURATION, record.returnPos),
-            CallFunc::create([view]() { view->setLocalZOrder(5); }), // 到位后恢复桌面牌 z
+            CallFunc::create([view, returnZ]() { view->setLocalZOrder(returnZ); }),
             nullptr);
         view->runAction(seq);
     } else {
-        // 现有备用牌整体向左移动，为归回的顶牌腾出锚点位置
+        // 现有备用牌整体左移，为归回的顶牌腾出锚点位置
         int n = (int)_reserveViewStack.size();
         for (int i = 0; i < n; i++) {
-            int fromTop = n - i; // 归回后此牌 fromTop 为 n-i
+            int fromTop = n - i;
             Vec2 newPos = _reservePos - Vec2(fromTop * RESERVE_STACK_OFFSET, 0);
-            _reserveViewStack[i]->stopAllActions(); // 防止快速撤回时动画叠加
+            _reserveViewStack[i]->stopAllActions();
             _reserveViewStack[i]->runAction(MoveTo::create(ANIM_DURATION, newPos));
         }
 
-        // 归回的牌动画期间保持高 z，到位后设为正确的堆叠层级
         view->setLocalZOrder(60);
         int finalZ = 10 + n;
 
@@ -269,7 +288,7 @@ void GameScene::onUndoClicked() {
 }
 
 // ---------------------------------------------------------------------------
-// 刷新显示：保持所有牌可见，仅更新 z-order 与回调
+// 刷新显示
 // ---------------------------------------------------------------------------
 
 void GameScene::refreshHandPileDisplay() {

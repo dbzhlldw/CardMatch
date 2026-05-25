@@ -1,5 +1,6 @@
 #pragma once
 #include "ICommand.h"
+#include <vector>
 
 class CardModel;
 class GameModel;
@@ -12,11 +13,16 @@ public:
     void execute() override;
     void undo()    override;
 
-    CardModel* getCard() const       { return _card; }
+    CardModel* getCard()         const { return _card; }
     int        getTableauIndex() const { return _tableauIndex; }
+
+    // execute() 执行后，新变为可操作（被解锁）的桌面牌列表
+    const std::vector<CardModel*>& getNewlyUnblocked() const { return _newlyUnblocked; }
 
 private:
     GameModel* _model;
     CardModel* _card;
     int        _tableauIndex; // 撤回时重新插回该位置
+
+    std::vector<CardModel*> _newlyUnblocked; // execute 时记录，undo 时恢复
 };

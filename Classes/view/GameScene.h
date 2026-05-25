@@ -1,7 +1,9 @@
 #pragma once
 #include "cocos2d.h"
 #include <vector>
+#include <unordered_map>
 #include <functional>
+#include "data/LayoutDef.h"
 
 class CardView;
 class CardModel;
@@ -24,8 +26,11 @@ private:
     GameModel*      _model      = nullptr;
     GameController* _controller = nullptr;
 
-    // 桌面牌视图列表
+    // 桌面牌视图列表（仅记录顺序，真正布局位置由 LayoutDef 决定）
     std::vector<CardView*> _tableauViews;
+
+    // 快速查找：CardModel* → CardView*
+    std::unordered_map<CardModel*, CardView*> _cardViewMap;
 
     // 手牌堆和备用牌堆各自的视图栈
     std::vector<CardView*> _handViewStack;
@@ -38,17 +43,17 @@ private:
     // 动画记录，用于撤回
     struct MoveRecord {
         CardView*      view;
-        cocos2d::Vec2  returnPos;    // 撤回时动画回到此处
+        cocos2d::Vec2  returnPos;       // 撤回时动画回到此处
         bool           returnToTableau;
-        int            tableauIndex; // returnToTableau 为 true 时有效
-        CardView*      prevHandTop;  // 此次移动前的手牌堆顶视图
+        int            tableauIndex;    // returnToTableau 为 true 时有效
+        CardView*      prevHandTop;     // 此次移动前的手牌堆顶视图
+        int            returnZOrder;    // 撤回后恢复的 z-order（按行层级）
     };
     std::vector<MoveRecord> _animHistory;
 
     static const float ANIM_DURATION;
 
-    void setupLayout();
-    void setupTableau();
+    void setupTableau(const LayoutDef& layout);
     void setupHandPile();
     void setupReserve();
     void setupUndoButton();
@@ -57,8 +62,8 @@ private:
     void onReserveClicked(CardView* view);
     void onUndoClicked();
 
-    // 让手牌堆顶视图可见，其余隐藏
+    // 让手牌堆所有牌可见，更新 z-order
     void refreshHandPileDisplay();
-    // 让备用牌堆顶视图可见，其余隐藏
+    // 让备用牌堆所有牌可见，更新 z-order；非顶牌清除回调
     void refreshReserveDisplay();
 };

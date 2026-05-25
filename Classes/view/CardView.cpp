@@ -87,6 +87,8 @@ void CardView::setupTouch() {
     listener->setSwallowTouches(true);
 
     listener->onTouchBegan = [this](Touch* touch, Event*) -> bool {
+        // 没有点击回调（被遮挡）时直接放行，不拦截触摸，让下层牌能收到事件
+        if (!_clickCallback) return false;
         auto local = convertToNodeSpace(touch->getLocation());
         Rect bounds(0, 0, CARD_SIZE.width, CARD_SIZE.height);
         return bounds.containsPoint(local);

@@ -48,6 +48,7 @@ endif()
 # add cross-platforms source files and header files
 list(APPEND GAME_SOURCE
      Classes/AppDelegate.cpp
+     Classes/data/LayoutDef.cpp
      Classes/model/GameModel.cpp
      Classes/controller/command/MatchCommand.cpp
      Classes/controller/command/DrawCommand.cpp
@@ -58,6 +59,7 @@ list(APPEND GAME_SOURCE
 list(APPEND GAME_HEADER
      Classes/AppDelegate.h
      Classes/data/CardDef.h
+     Classes/data/LayoutDef.h
      Classes/model/CardModel.h
      Classes/model/GameModel.h
      Classes/controller/command/ICommand.h
