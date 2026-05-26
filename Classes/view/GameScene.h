@@ -59,4 +59,7 @@ private:
 
     void lockInput();
     void unlockInput();
+    void playRejectShake(CardView* view);
+    void playBlockedFeedback(CardView* view, CardModel* card);
+    void playBlockerHighlight(CardView* view);
 };

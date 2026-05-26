@@ -68,6 +68,7 @@ public:
 
     // --- 触摸决策（Scene 负责几何检测，Presenter 负责选牌与规则）---
     CardModel* pickTableauCard(const std::vector<TableauHitCandidate>& candidates) const;
+    std::vector<CardModel*> getDirectBlockers(CardModel* card) const;
     CardModel* reserveTopCard() const;
     bool       isReserveTop(CardModel* card) const;
 

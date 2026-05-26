@@ -104,6 +104,28 @@ CardModel* GamePresenter::pickTableauCard(const std::vector<TableauHitCandidate>
     return best(false);
 }
 
+std::vector<CardModel*> GamePresenter::getDirectBlockers(CardModel* card) const {
+    std::vector<CardModel*> blockers;
+    if (!card) return blockers;
+
+    auto it = _slotIndex.find(card);
+    if (it == _slotIndex.end()) return blockers;
+
+    const int slotIdx = it->second;
+    const auto& layout = level().layout;
+    if (slotIdx < 0 || slotIdx >= (int)layout.size()) return blockers;
+
+    for (int blockerSlot : layout[slotIdx].blockedBy) {
+        for (const auto& kv : _slotIndex) {
+            if (kv.second != blockerSlot) continue;
+            if (model().getTableauIndex(kv.first) >= 0)
+                blockers.push_back(kv.first);
+            break;
+        }
+    }
+    return blockers;
+}
+
 CardModel* GamePresenter::reserveTopCard() const {
     if (model().getReserveSize() == 0) return nullptr;
     return model().getReserve().back();

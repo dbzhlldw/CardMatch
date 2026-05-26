@@ -12,6 +12,17 @@ const float GameScene::ANIM_DURATION  = 0.25f;
 const int   GameScene::FLYING_Z_ORDER = 200;
 
 namespace {
+const float REJECT_SHAKE_OFFSET    = 14.f;
+const float REJECT_SHAKE_SEGMENT   = 0.055f;
+const int   REJECT_SHAKE_SEGMENTS  = 5; // 左右各晃两下，回到原位
+const float BLOCKED_BUMP_DROP      = 10.f;
+const float BLOCKED_BUMP_SEGMENT   = 0.07f;
+const int   BLOCKED_BUMP_SEGMENTS  = 4; // 垂直轻弹两下，回到原位
+const float BLOCKER_HIGHLIGHT_SCALE = 1.05f;
+const float BLOCKER_HIGHLIGHT_SEG   = 0.1f;
+} // namespace
+
+namespace {
 
 const float SHADOW_OFFSET       = 4.f;
 const int   SHADOW_LAYERS       = 5;
@@ -335,10 +346,10 @@ CardView* GameScene::viewForCard(CardModel* card) const {
 // ---------------------------------------------------------------------------
 
 CardView* GameScene::hitTestTableau(const Vec2& scenePos) const {
-    std::vector<TableauHitCandidate> hits;
+    CardModel* picked = nullptr;
+    int bestZ = -1;
 
     for (auto* card : _presenter->model().getTableau()) {
-        if (!card->isAccessible()) continue;
         CardView* view = viewForCard(card);
         if (!view) continue;
 
@@ -346,11 +357,13 @@ CardView* GameScene::hitTestTableau(const Vec2& scenePos) const {
         Rect bounds(0, 0, CardView::CARD_SIZE.width, CardView::CARD_SIZE.height);
         if (!bounds.containsPoint(local)) continue;
 
-        hits.push_back({ card, view->getLocalZOrder(),
-                         _presenter->controller().canMatchTableau(card) });
+        int z = view->getLocalZOrder();
+        if (z > bestZ) {
+            bestZ = z;
+            picked = card;
+        }
     }
 
-    CardModel* picked = _presenter->pickTableauCard(hits);
     return viewForCard(picked);
 }
 
@@ -378,6 +391,61 @@ void GameScene::unlockInput() {
     _inputLocked = false;
 }
 
+void GameScene::playRejectShake(CardView* view) {
+    if (!view) return;
+
+    view->stopAllActions();
+
+    const float seg = REJECT_SHAKE_SEGMENT;
+    lockInput();
+    view->runAction(Sequence::create(
+        MoveBy::create(seg, Vec2(-REJECT_SHAKE_OFFSET, 0)),
+        MoveBy::create(seg, Vec2(REJECT_SHAKE_OFFSET * 2, 0)),
+        MoveBy::create(seg, Vec2(-REJECT_SHAKE_OFFSET * 2, 0)),
+        MoveBy::create(seg, Vec2(REJECT_SHAKE_OFFSET * 2, 0)),
+        MoveBy::create(seg, Vec2(-REJECT_SHAKE_OFFSET, 0)),
+        nullptr));
+
+    scheduleOnce([this](float) { unlockInput(); },
+                 seg * REJECT_SHAKE_SEGMENTS + 0.05f, "unlock_input");
+}
+
+void GameScene::playBlockerHighlight(CardView* view) {
+    if (!view) return;
+
+    view->runAction(Sequence::create(
+        ScaleTo::create(BLOCKER_HIGHLIGHT_SEG, BLOCKER_HIGHLIGHT_SCALE),
+        ScaleTo::create(BLOCKER_HIGHLIGHT_SEG, 1.f),
+        nullptr));
+}
+
+void GameScene::playBlockedFeedback(CardView* view, CardModel* card) {
+    if (!view || !card) return;
+
+    view->stopAllActions();
+    view->setScale(1.f);
+
+    const float seg  = BLOCKED_BUMP_SEGMENT;
+    const float drop = BLOCKED_BUMP_DROP;
+    lockInput();
+    view->runAction(Sequence::create(
+        MoveBy::create(seg, Vec2(0, -drop)),
+        MoveBy::create(seg, Vec2(0, drop)),
+        MoveBy::create(seg, Vec2(0, -drop * 0.6f)),
+        MoveBy::create(seg, Vec2(0, drop * 0.6f)),
+        nullptr));
+
+    for (CardModel* blocker : _presenter->getDirectBlockers(card)) {
+        if (CardView* blockerView = viewForCard(blocker))
+            playBlockerHighlight(blockerView);
+    }
+
+    const float bumpDuration = seg * BLOCKED_BUMP_SEGMENTS;
+    const float highlightDuration = BLOCKER_HIGHLIGHT_SEG * 2.f;
+    scheduleOnce([this](float) { unlockInput(); },
+                 std::max(bumpDuration, highlightDuration) + 0.05f, "unlock_input");
+}
+
 void GameScene::refreshViewAfterAction(const PresenterOutcome& outcome) {
     if (!outcome.success) return;
 
@@ -403,8 +471,22 @@ void GameScene::refreshViewAfterAction(const PresenterOutcome& outcome) {
 }
 
 void GameScene::onTableauCardClicked(CardView* view) {
-    if (_inputLocked) return;
-    refreshViewAfterAction(_presenter->onTableauTapped(view->getModel()));
+    if (_inputLocked || !view) return;
+
+    CardModel* card = view->getModel();
+    if (!card) return;
+
+    if (!card->isAccessible()) {
+        playBlockedFeedback(view, card);
+        return;
+    }
+
+    if (!_presenter->controller().canMatchTableau(card)) {
+        playRejectShake(view);
+        return;
+    }
+
+    refreshViewAfterAction(_presenter->onTableauTapped(card));
 }
 
 void GameScene::onReserveClicked() {
