@@ -24,9 +24,8 @@ bool AppDelegate::applicationDidFinishLaunching() {
 #if (CC_TARGET_PLATFORM == CC_PLATFORM_WIN32) || \
     (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)  || \
     (CC_TARGET_PLATFORM == CC_PLATFORM_LINUX)
-        // 理想缩放 0.5（窗口 540×1040）
-        // 若屏幕高度不足则等比缩小，留 10px 边距
-        float scale = 0.5f;
+        // 默认按设计尺寸 1:1 创建窗口（1080×2080）；仅当屏幕高度放不下时再等比缩小
+        float scale = 1.0f;
 #if (CC_TARGET_PLATFORM == CC_PLATFORM_MAC)
         // visibleFrame 已排除菜单栏和 Dock，再减去窗口标题栏（约28px）和底部安全边距
         static const float WINDOW_TITLE_BAR_H = 28.f;
