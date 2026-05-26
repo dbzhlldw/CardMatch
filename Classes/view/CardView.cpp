@@ -1,3 +1,4 @@
+// CardView — 卡牌节点构建、资源路径与触摸监听的实现
 #include "CardView.h"
 #include "model/CardModel.h"
 #include "data/CardDef.h"

@@ -1,3 +1,4 @@
+// CardModel — 单张牌的数据：花色、点数、正反面、遮挡计数
 #pragma once
 #include "data/CardDef.h"
 

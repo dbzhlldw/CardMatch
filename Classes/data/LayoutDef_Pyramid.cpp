@@ -1,4 +1,5 @@
-#include "LayoutDef.h"
+// LayoutDef_Pyramid — 金字塔布局的槽位坐标与遮挡关系（Layouts::PYRAMID 的实现）
+#include "LayoutDef_Pyramid.h"
 
 // ---------------------------------------------------------------------------
 // 单峰四行金字塔布局（10 张桌面牌）
@@ -22,7 +23,7 @@
 // ---------------------------------------------------------------------------
 
 static const float S  = 200.f;
-static const float X0 = 240.f;  // 底行第一张 x
+static const float X0 = 240.f;
 
 static const float Y_BASE = 990.f;
 static const float Y_ROW2 = 1210.f;
@@ -33,28 +34,17 @@ static float bx(int i) { return X0 + i * S; }
 static float mid(float a, float b) { return (a + b) * 0.5f; }
 
 const LayoutDef Layouts::PYRAMID = {
-    // ---- 底行 Slots 0-3（z=1，被相邻 Row2 牌遮挡）----
-    // Base[0] 被 Row2[0](slot4) 遮挡
-    { bx(0), Y_BASE, 1, {4}    },  // 0
-    // Base[1] 被 Row2[0](slot4) 和 Row2[1](slot5) 遮挡
-    { bx(1), Y_BASE, 1, {4, 5} },  // 1
-    // Base[2] 被 Row2[1](slot5) 和 Row2[2](slot6) 遮挡
-    { bx(2), Y_BASE, 1, {5, 6} },  // 2
-    // Base[3] 被 Row2[2](slot6) 遮挡
-    { bx(3), Y_BASE, 1, {6}    },  // 3
+    { bx(0), Y_BASE, 1, {4}    },
+    { bx(1), Y_BASE, 1, {4, 5} },
+    { bx(2), Y_BASE, 1, {5, 6} },
+    { bx(3), Y_BASE, 1, {6}    },
 
-    // ---- 第 2 行 Slots 4-6（z=2，被相邻 Row3 牌遮挡）----
-    // Row2[0] 被 Row3[0](slot7) 遮挡
-    { mid(bx(0),bx(1)), Y_ROW2, 2, {7}    },  // 4
-    // Row2[1] 被 Row3[0](slot7) 和 Row3[1](slot8) 遮挡
-    { mid(bx(1),bx(2)), Y_ROW2, 2, {7, 8} },  // 5
-    // Row2[2] 被 Row3[1](slot8) 遮挡
-    { mid(bx(2),bx(3)), Y_ROW2, 2, {8}    },  // 6
+    { mid(bx(0),bx(1)), Y_ROW2, 2, {7}    },
+    { mid(bx(1),bx(2)), Y_ROW2, 2, {7, 8} },
+    { mid(bx(2),bx(3)), Y_ROW2, 2, {8}    },
 
-    // ---- 第 3 行 Slots 7-8（z=3，被 Apex(slot9) 遮挡）----
-    { mid(mid(bx(0),bx(1)), mid(bx(1),bx(2))), Y_ROW3, 3, {9} },  // 7
-    { mid(mid(bx(1),bx(2)), mid(bx(2),bx(3))), Y_ROW3, 3, {9} },  // 8
+    { mid(mid(bx(0),bx(1)), mid(bx(1),bx(2))), Y_ROW3, 3, {9} },
+    { mid(mid(bx(1),bx(2)), mid(bx(2),bx(3))), Y_ROW3, 3, {9} },
 
-    // ---- 顶点 Slot 9（z=4，无遮挡，初始可操作）----
-    { X0 + 1.5f * S, Y_APEX, 4, {} },  // 9  x=540
+    { X0 + 1.5f * S, Y_APEX, 4, {} },
 };

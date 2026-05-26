@@ -1,3 +1,4 @@
+// DrawCommand — 备用牌堆顶牌入手牌堆的实现
 #include "DrawCommand.h"
 #include "model/GameModel.h"
 

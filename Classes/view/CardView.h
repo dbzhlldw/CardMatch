@@ -1,11 +1,10 @@
+// CardView — 单张牌的 cocos 视图：正/背面拼合、显示刷新、可选点击回调
 #pragma once
 #include "cocos2d.h"
 #include <functional>
 
 class CardModel;
 
-// 单张牌的视图
-// 背景 + 数字 + 花色图片拼合而成
 class CardView : public cocos2d::Node {
 public:
     static const cocos2d::Size CARD_SIZE; // 182 x 282

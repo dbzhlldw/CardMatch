@@ -1,20 +1,115 @@
+// GameScene — 场景初始化、CardView 生命周期、布局动画与触摸的实现
 #include "GameScene.h"
 #include "CardView.h"
-#include "model/GameModel.h"
 #include "model/CardModel.h"
-#include "controller/GameController.h"
-#include "data/LayoutDef.h"
+#include "data/Levels.h"
 #include <algorithm>
+#include <functional>
 
 USING_NS_CC;
 
-const float GameScene::DESIGN_WIDTH        = 1080.f;
-const float GameScene::DESIGN_HEIGHT       = 2080.f;
-const float GameScene::PILE_AREA_H         = 580.f;
-const float GameScene::TABLEAU_AREA_H        = GameScene::DESIGN_HEIGHT - GameScene::PILE_AREA_H;
-const float GameScene::ANIM_DURATION       = 0.25f;
-const float GameScene::RESERVE_STACK_OFFSET = 15.f;
-const int   GameScene::FLYING_Z_ORDER      = 200;
+const float GameScene::ANIM_DURATION  = 0.25f;
+const int   GameScene::FLYING_Z_ORDER = 200;
+
+namespace {
+
+const float SHADOW_OFFSET       = 4.f;
+const int   SHADOW_LAYERS       = 5;
+const float SHADOW_SPREAD       = 6.f;
+const float SPRITE_SHADOW_ALPHA = 0.35f;
+
+cocos2d::Color4B hexColor(unsigned int rgb) {
+    return cocos2d::Color4B((rgb >> 16) & 0xFF, (rgb >> 8) & 0xFF, rgb & 0xFF, 255);
+}
+
+void drawSoftCircleShadow(cocos2d::DrawNode* dn, float radius) {
+    for (int i = SHADOW_LAYERS - 1; i >= 0; --i) {
+        float t = (float)(i + 1) / SHADOW_LAYERS;
+        float r = radius + SHADOW_SPREAD * t;
+        float alpha = 0.20f * (1.f - t * 0.92f);
+        dn->drawDot(cocos2d::Vec2::ZERO, r, cocos2d::Color4F(0.f, 0.f, 0.f, alpha));
+    }
+}
+
+void addSoftSpriteShadow(cocos2d::Node* parent,
+                         cocos2d::SpriteFrame* frame,
+                         float scale) {
+    auto* shadow = cocos2d::Sprite::createWithSpriteFrame(frame);
+    shadow->setAnchorPoint(cocos2d::Vec2(0.5f, 0.5f));
+    shadow->setScale(scale);
+    shadow->setColor(cocos2d::Color3B::BLACK);
+    shadow->setOpacity((GLubyte)(255 * SPRITE_SHADOW_ALPHA));
+    shadow->setPosition(cocos2d::Vec2(SHADOW_OFFSET, -SHADOW_OFFSET));
+    parent->addChild(shadow, 0);
+}
+
+enum class IconShadowStyle { Circle, Sprite };
+
+struct IconButton {
+    cocos2d::Node* root     = nullptr;
+    float          hitHalfW = 0.f;
+    float          hitHalfH = 0.f;
+};
+
+IconButton createIconButton(const char* imagePath,
+                            float targetSize,
+                            IconShadowStyle shadowStyle) {
+    IconButton button;
+    auto* icon = cocos2d::Sprite::create(imagePath);
+    if (!icon) {
+        CCLOG("%s not found", imagePath);
+        return button;
+    }
+
+    float scale    = targetSize / icon->getContentSize().width;
+    float hitHalfW = icon->getContentSize().width * scale * 0.5f;
+    float hitHalfH = icon->getContentSize().height * scale * 0.5f;
+
+    auto* root = cocos2d::Node::create();
+    root->setAnchorPoint(cocos2d::Vec2(0.5f, 0.5f));
+
+    if (shadowStyle == IconShadowStyle::Circle) {
+        auto* shadow = cocos2d::DrawNode::create();
+        drawSoftCircleShadow(shadow, targetSize * 0.5f);
+        shadow->setPosition(cocos2d::Vec2(SHADOW_OFFSET, -SHADOW_OFFSET));
+        root->addChild(shadow, 0);
+    } else {
+        addSoftSpriteShadow(root, icon->getSpriteFrame(), scale);
+    }
+
+    icon->setScale(scale);
+    icon->setAnchorPoint(cocos2d::Vec2(0.5f, 0.5f));
+    root->addChild(icon, 1);
+
+    button.root     = root;
+    button.hitHalfW = hitHalfW;
+    button.hitHalfH = hitHalfH;
+    return button;
+}
+
+bool hitTestCenteredNode(cocos2d::Node* node, float halfW, float halfH, cocos2d::Touch* touch) {
+    cocos2d::Vec2 local = node->convertToNodeSpace(touch->getLocation());
+    return cocos2d::Rect(-halfW, -halfH, halfW * 2.f, halfH * 2.f).containsPoint(local);
+}
+
+void addIconTouchHandler(cocos2d::Node* target,
+                         float halfW,
+                         float halfH,
+                         cocos2d::EventDispatcher* dispatcher,
+                         const std::function<void()>& onClick) {
+    auto listener = cocos2d::EventListenerTouchOneByOne::create();
+    listener->setSwallowTouches(true);
+    listener->onTouchBegan = [target, halfW, halfH](cocos2d::Touch* t, cocos2d::Event*) -> bool {
+        return hitTestCenteredNode(target, halfW, halfH, t);
+    };
+    listener->onTouchEnded = [target, halfW, halfH, onClick](cocos2d::Touch* t, cocos2d::Event*) {
+        if (hitTestCenteredNode(target, halfW, halfH, t))
+            onClick();
+    };
+    dispatcher->addEventListenerWithSceneGraphPriority(listener, target);
+}
+
+} // namespace
 
 Scene* GameScene::createScene() {
     return GameScene::create();
@@ -23,26 +118,22 @@ Scene* GameScene::createScene() {
 bool GameScene::init() {
     if (!Scene::init()) return false;
 
-    _model      = GameModel::getInstance();
-    _controller = GameController::getInstance();
+    _presenter = std::make_unique<GamePresenter>(Levels::PYRAMID_TEST);
 
-    _layout = Layouts::PYRAMID;
-    _model->setupGame(_layout);
-    _controller->init();
+    auto tableauBg = LayerColor::create(hexColor(0x7388A3), Layout::DESIGN_WIDTH, Layout::TABLEAU_AREA_H);
+    tableauBg->setPosition(Vec2(0.f, Layout::PILE_AREA_H));
+    addChild(tableauBg, -2);
 
-    float pileAreaCenterY = PILE_AREA_H / 2.f;
-    _reservePos  = Vec2(DESIGN_WIDTH * 0.35f, pileAreaCenterY);
-    _handPilePos = Vec2(DESIGN_WIDTH * 0.65f, pileAreaCenterY);
-
-    auto bg = LayerColor::create(Color4B(110, 110, 110, 255), DESIGN_WIDTH, PILE_AREA_H);
-    bg->setPosition(Vec2::ZERO);
-    addChild(bg, -1);
+    auto pileBg = LayerColor::create(hexColor(0xA7BDD5), Layout::DESIGN_WIDTH, Layout::PILE_AREA_H);
+    pileBg->setPosition(Vec2::ZERO);
+    addChild(pileBg, -1);
 
     createAllCardViews();
     rebuildViewStacksFromModel();
     applyAllLayouts(false);
     syncAllInteractable();
-    setupUndoButton();
+    setupPileButtons();
+    setupRestartButton();
     setupSceneTouch();
 
     return true;
@@ -53,25 +144,27 @@ bool GameScene::init() {
 // ---------------------------------------------------------------------------
 
 void GameScene::createAllCardViews() {
-    const auto& tableau = _model->getTableau();
+    const auto& tableau = _presenter->model().getTableau();
+    const auto& level   = _presenter->level();
+
     for (int i = 0; i < (int)tableau.size(); i++) {
         CardModel* card = tableau[i];
-        _cardSlotIndex[card] = i;
+        _presenter->registerTableauSlot(card, i);
 
         auto view = CardView::create(card);
         view->setAnchorPoint(Vec2(0.5f, 0.5f));
-        addChild(view, _layout[i].zOrder);
+        addChild(view, level.layout[i].zOrder);
         _cardViewMap[card] = view;
     }
 
-    for (auto* card : _model->getHand()) {
+    for (auto* card : _presenter->model().getHand()) {
         auto view = CardView::create(card);
         view->setAnchorPoint(Vec2(0.5f, 0.5f));
         addChild(view, 10);
         _cardViewMap[card] = view;
     }
 
-    for (auto* card : _model->getReserve()) {
+    for (auto* card : _presenter->model().getReserve()) {
         auto view = CardView::create(card);
         view->setAnchorPoint(Vec2(0.5f, 0.5f));
         addChild(view, 10);
@@ -79,37 +172,61 @@ void GameScene::createAllCardViews() {
     }
 }
 
-void GameScene::setupUndoButton() {
-    const Vec2  btnPos(DESIGN_WIDTH * 0.88f, PILE_AREA_H / 2.f);
-    const float TARGET_SIZE   = 160.f;
-    const float SHADOW_OFFSET = 8.f;
+void GameScene::destroyAllCardViews() {
+    for (auto& kv : _cardViewMap)
+        kv.second->removeFromParent();
+    _cardViewMap.clear();
+    _tableauViews.clear();
+    _handViewStack.clear();
+    _reserveViewStack.clear();
+    _touchTarget = nullptr;
+}
 
-    auto shadow = Sprite::create("res/other/undo_blue.png");
-    if (!shadow) { CCLOG("undo_blue.png not found"); return; }
-    float scale = TARGET_SIZE / shadow->getContentSize().width;
-    shadow->setScale(scale);
-    shadow->setAnchorPoint(Vec2(0.5f, 0.5f));
-    shadow->setPosition(btnPos + Vec2(SHADOW_OFFSET, -SHADOW_OFFSET));
-    shadow->setColor(Color3B(0, 0, 0));
-    shadow->setOpacity(90);
-    addChild(shadow, 40);
+void GameScene::setupPileButtons() {
+    const float TARGET_SIZE = 120.f;
+    Vec2f pos = _presenter->undoButtonPosition();
 
-    auto btn = Sprite::create("res/other/undo_blue.png");
-    btn->setScale(scale);
-    btn->setAnchorPoint(Vec2(0.5f, 0.5f));
-    btn->setPosition(btnPos);
-    addChild(btn, 50);
+    auto button = createIconButton("res/other/undo.png", TARGET_SIZE, IconShadowStyle::Circle);
+    if (!button.root) return;
+
+    button.root->setPosition(Vec2(pos.x, pos.y));
+    addChild(button.root, 50);
+
+    addIconTouchHandler(button.root, button.hitHalfW, button.hitHalfH, _eventDispatcher,
+                        [this]() { onUndoClicked(); });
+}
+
+void GameScene::setupRestartButton() {
+    const float TARGET_SIZE = 140.f;
+    Vec2f pos = _presenter->restartButtonPosition();
+
+    auto button = createIconButton("res/other/reset.png", TARGET_SIZE, IconShadowStyle::Sprite);
+    if (!button.root) return;
+
+    _restartButton   = button.root;
+    _restartHitHalfW = button.hitHalfW;
+    _restartHitHalfH = button.hitHalfH;
+    _restartButton->setPosition(Vec2(pos.x, pos.y));
+    _restartButton->setVisible(false);
+    addChild(_restartButton, 101);
 
     auto listener = EventListenerTouchOneByOne::create();
     listener->setSwallowTouches(true);
-    listener->onTouchBegan = [btn](Touch* t, Event*) -> bool {
-        return btn->getBoundingBox().containsPoint(t->getLocation());
+    listener->onTouchBegan = [this](Touch* t, Event*) -> bool {
+        if (!_restartButton || !_restartButton->isVisible()) return false;
+        return hitTestCenteredNode(_restartButton, _restartHitHalfW, _restartHitHalfH, t);
     };
-    listener->onTouchEnded = [this, btn](Touch* t, Event*) {
-        if (btn->getBoundingBox().containsPoint(t->getLocation()))
-            onUndoClicked();
+    listener->onTouchEnded = [this](Touch* t, Event*) {
+        if (_restartButton && _restartButton->isVisible()
+            && hitTestCenteredNode(_restartButton, _restartHitHalfW, _restartHitHalfH, t))
+            onRestartClicked();
     };
-    _eventDispatcher->addEventListenerWithSceneGraphPriority(listener, btn);
+    _eventDispatcher->addEventListenerWithSceneGraphPriority(listener, _restartButton);
+}
+
+void GameScene::updateRestartButtonVisibility() {
+    if (!_restartButton) return;
+    _restartButton->setVisible(_presenter->isRestartButtonVisible());
 }
 
 void GameScene::setupSceneTouch() {
@@ -140,12 +257,10 @@ void GameScene::setupSceneTouch() {
         CardView* hit = hitTestReserveTop(pos);
         if (!hit) hit = hitTestTableau(pos);
         if (hit == _touchTarget) {
-            if (std::find(_reserveViewStack.begin(), _reserveViewStack.end(), hit)
-                != _reserveViewStack.end()) {
+            if (_presenter->isReserveTop(hit->getModel()))
                 onReserveClicked();
-            } else {
+            else
                 onTableauCardClicked(hit);
-            }
         }
         _touchTarget = nullptr;
     };
@@ -154,7 +269,7 @@ void GameScene::setupSceneTouch() {
 }
 
 // ---------------------------------------------------------------------------
-// Model 驱动的 View 同步
+// Presenter 驱动的 View 同步
 // ---------------------------------------------------------------------------
 
 void GameScene::rebuildViewStacksFromModel() {
@@ -162,48 +277,18 @@ void GameScene::rebuildViewStacksFromModel() {
     _reserveViewStack.clear();
     _tableauViews.clear();
 
-    for (auto* card : _model->getHand()) {
-        auto it = _cardViewMap.find(card);
-        if (it != _cardViewMap.end()) _handViewStack.push_back(it->second);
+    for (auto* card : _presenter->model().getHand()) {
+        if (auto* view = viewForCard(card)) _handViewStack.push_back(view);
     }
-    for (auto* card : _model->getReserve()) {
-        auto it = _cardViewMap.find(card);
-        if (it != _cardViewMap.end()) _reserveViewStack.push_back(it->second);
+    for (auto* card : _presenter->model().getReserve()) {
+        if (auto* view = viewForCard(card)) _reserveViewStack.push_back(view);
     }
-    for (auto* card : _model->getTableau()) {
-        auto it = _cardViewMap.find(card);
-        if (it != _cardViewMap.end()) _tableauViews.push_back(it->second);
+    for (auto* card : _presenter->model().getTableau()) {
+        if (auto* view = viewForCard(card)) _tableauViews.push_back(view);
     }
-}
-
-Vec2 GameScene::handPositionFor(int /*index*/) const {
-    return _handPilePos;
-}
-
-Vec2 GameScene::reservePositionFor(int index, int total) const {
-    int fromTop = total - 1 - index;
-    return _reservePos - Vec2(fromTop * RESERVE_STACK_OFFSET, 0.f);
-}
-
-Vec2 GameScene::slotPositionFor(CardModel* card) const {
-    auto it = _cardSlotIndex.find(card);
-    if (it == _cardSlotIndex.end()) return Vec2::ZERO;
-    const SlotDef& slot = _layout[it->second];
-    return Vec2(slot.x, slot.y);
-}
-
-int GameScene::slotZOrderFor(CardModel* card) const {
-    auto it = _cardSlotIndex.find(card);
-    if (it == _cardSlotIndex.end()) return 0;
-    return _layout[it->second].zOrder;
 }
 
 void GameScene::applyAllLayouts(bool animate, CardView* flyingView) {
-    const auto& hand    = _model->getHand();
-    const auto& reserve = _model->getReserve();
-    const auto& tableau = _model->getTableau();
-    const int   rn      = (int)reserve.size();
-
     auto place = [&](CardView* view, const Vec2& target, int finalZ, bool faceUp) {
         view->stopAllActions();
         view->setFaceUp(faceUp);
@@ -227,66 +312,56 @@ void GameScene::applyAllLayouts(bool animate, CardView* flyingView) {
         }
     };
 
-    for (int i = 0; i < (int)hand.size(); i++)
-        place(_cardViewMap[hand[i]], handPositionFor(i), 10 + i, true);
-
-    for (int i = 0; i < rn; i++)
-        place(_cardViewMap[reserve[i]], reservePositionFor(i, rn), 10 + i, true);
-
-    for (auto* card : tableau)
-        place(_cardViewMap[card], slotPositionFor(card), slotZOrderFor(card), true);
+    for (const auto& spec : _presenter->buildCardLayout()) {
+        CardView* view = viewForCard(spec.card);
+        if (!view) continue;
+        place(view, Vec2(spec.position.x, spec.position.y), spec.zOrder, spec.faceUp);
+    }
 }
 
 void GameScene::syncAllInteractable() {
-    // 桌面/备用牌堆的点击由 Scene 级 hit-test 处理，清除所有 CardView 回调
     for (auto& kv : _cardViewMap)
         kv.second->setClickCallback(nullptr);
 }
 
+CardView* GameScene::viewForCard(CardModel* card) const {
+    if (!card) return nullptr;
+    auto it = _cardViewMap.find(card);
+    return it != _cardViewMap.end() ? it->second : nullptr;
+}
+
 // ---------------------------------------------------------------------------
-// Hit test（按 z-order 从高到低，优先点中最上层可操作的牌）
+// Hit test（几何检测在 Scene，选牌决策在 Presenter）
 // ---------------------------------------------------------------------------
 
 CardView* GameScene::hitTestTableau(const Vec2& scenePos) const {
-    struct Entry { CardView* view; bool matchable; int z; };
-    std::vector<Entry> hits;
+    std::vector<TableauHitCandidate> hits;
 
-    for (auto* card : _model->getTableau()) {
+    for (auto* card : _presenter->model().getTableau()) {
         if (!card->isAccessible()) continue;
-        auto it = _cardViewMap.find(card);
-        if (it == _cardViewMap.end()) continue;
+        CardView* view = viewForCard(card);
+        if (!view) continue;
 
-        CardView* view = it->second;
         Vec2 local = view->convertToNodeSpace(scenePos);
         Rect bounds(0, 0, CardView::CARD_SIZE.width, CardView::CARD_SIZE.height);
         if (!bounds.containsPoint(local)) continue;
 
-        hits.push_back({ view, _controller->canMatchTableau(card), view->getLocalZOrder() });
+        hits.push_back({ card, view->getLocalZOrder(),
+                         _presenter->controller().canMatchTableau(card) });
     }
 
-    if (hits.empty()) return nullptr;
-
-    // 优先：可匹配 + z 最高；其次：任意可操作 + z 最高
-    auto best = [&](bool requireMatchable) -> CardView* {
-        CardView* pick = nullptr;
-        int bestZ = -1;
-        for (const auto& e : hits) {
-            if (requireMatchable && !e.matchable) continue;
-            if (e.z > bestZ) { bestZ = e.z; pick = e.view; }
-        }
-        return pick;
-    };
-
-    if (CardView* v = best(true)) return v;
-    return best(false);
+    CardModel* picked = _presenter->pickTableauCard(hits);
+    return viewForCard(picked);
 }
 
 CardView* GameScene::hitTestReserveTop(const Vec2& scenePos) const {
-    if (_model->getReserveSize() == 0 || _reserveViewStack.empty()) return nullptr;
-    CardView* top = _reserveViewStack.back();
-    Vec2 local = top->convertToNodeSpace(scenePos);
+    CardModel* top = _presenter->reserveTopCard();
+    CardView* view = viewForCard(top);
+    if (!view) return nullptr;
+
+    Vec2 local = view->convertToNodeSpace(scenePos);
     Rect bounds(0, 0, CardView::CARD_SIZE.width, CardView::CARD_SIZE.height);
-    if (bounds.containsPoint(local)) return top;
+    if (bounds.containsPoint(local)) return view;
     return nullptr;
 }
 
@@ -303,41 +378,49 @@ void GameScene::unlockInput() {
     _inputLocked = false;
 }
 
-void GameScene::onTableauCardClicked(CardView* view) {
-    if (_inputLocked) return;
+void GameScene::refreshViewAfterAction(const PresenterOutcome& outcome) {
+    if (!outcome.success) return;
 
-    CardModel* card = view->getModel();
-    if (!card->isAccessible()) return;
-    if (!_controller->tryMatch(card)) return;
+    if (outcome.fullRestart) {
+        destroyAllCardViews();
+        createAllCardViews();
+        rebuildViewStacksFromModel();
+        applyAllLayouts(false);
+        syncAllInteractable();
+        updateRestartButtonVisibility();
+        return;
+    }
 
     lockInput();
+    CardView* flying = viewForCard(outcome.flyingCard);
     rebuildViewStacksFromModel();
-    applyAllLayouts(true, _cardViewMap[_model->getHandTop()]);
+    applyAllLayouts(true, flying);
     syncAllInteractable();
-    scheduleOnce([this](float) { unlockInput(); }, ANIM_DURATION + 0.05f, "unlock_input");
+    scheduleOnce([this](float) {
+        unlockInput();
+        updateRestartButtonVisibility();
+    }, ANIM_DURATION + 0.05f, "unlock_input");
+}
+
+void GameScene::onTableauCardClicked(CardView* view) {
+    if (_inputLocked) return;
+    refreshViewAfterAction(_presenter->onTableauTapped(view->getModel()));
 }
 
 void GameScene::onReserveClicked() {
     if (_inputLocked) return;
-    if (!_controller->tryDraw()) return;
-
-    lockInput();
-    rebuildViewStacksFromModel();
-    applyAllLayouts(true, _cardViewMap[_model->getHandTop()]);
-    syncAllInteractable();
-    scheduleOnce([this](float) { unlockInput(); }, ANIM_DURATION + 0.05f, "unlock_input");
+    refreshViewAfterAction(_presenter->onReserveTapped());
 }
 
 void GameScene::onUndoClicked() {
-    if (_inputLocked || !_controller->canUndo()) return;
+    if (_inputLocked) return;
+    refreshViewAfterAction(_presenter->onUndoTapped());
+}
 
-    CardModel* flyingCard = _model->getHandTop();
-    CardView*  flyingView = flyingCard ? _cardViewMap[flyingCard] : nullptr;
+void GameScene::onRestartClicked() {
+    if (_inputLocked) return;
 
     lockInput();
-    _controller->tryUndo();
-    rebuildViewStacksFromModel();
-    applyAllLayouts(true, flyingView);
-    syncAllInteractable();
-    scheduleOnce([this](float) { unlockInput(); }, ANIM_DURATION + 0.05f, "unlock_input");
+    refreshViewAfterAction(_presenter->onRestartTapped());
+    unlockInput();
 }

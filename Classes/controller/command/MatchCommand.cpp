@@ -1,3 +1,4 @@
+// MatchCommand — 桌面牌移入手牌堆，并更新遮挡解锁状态
 #include "MatchCommand.h"
 #include "model/GameModel.h"
 

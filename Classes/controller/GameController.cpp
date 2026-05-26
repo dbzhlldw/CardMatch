@@ -1,3 +1,5 @@
+// GameController — 游戏规则入口的实现（tryMatch / tryDraw / tryUndo），校验操作是否合法、
+// 创建 Command、执行并维护撤销栈
 #include "GameController.h"
 #include "command/MatchCommand.h"
 #include "command/DrawCommand.h"
@@ -5,16 +7,12 @@
 #include "model/CardModel.h"
 #include <cmath>
 
-GameController* GameController::_instance = nullptr;
+GameController::GameController(GameModel& model)
+    : _model(&model) {}
 
-GameController* GameController::getInstance() {
-    if (!_instance) _instance = new GameController();
-    return _instance;
-}
-
-void GameController::init() {
-    _model = GameModel::getInstance();
+void GameController::resetHistory() {
     _history.clear();
+    _lastUndone.reset();
 }
 
 bool GameController::canMatch(CardModel* a, CardModel* b) const {
@@ -56,7 +54,7 @@ ICommand* GameController::tryUndo() {
 
     auto& cmd = _history.back();
     cmd->undo();
-    _lastUndone = std::move(cmd); // 把裸指针暂存在 _lastUndone 里，调用方在下次操作前有效
+    _lastUndone = std::move(cmd);
     _history.pop_back();
     return _lastUndone.get();
 }

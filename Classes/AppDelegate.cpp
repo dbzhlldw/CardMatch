@@ -32,14 +32,14 @@ bool AppDelegate::applicationDidFinishLaunching() {
         static const float WINDOW_TITLE_BAR_H = 28.f;
         static const float BOTTOM_MARGIN      = 10.f;
         float screenH = getAvailableScreenHeight() - WINDOW_TITLE_BAR_H - BOTTOM_MARGIN;
-        float idealWindowH = GameScene::DESIGN_HEIGHT * scale;
+        float idealWindowH = GameScene::Layout::DESIGN_HEIGHT * scale;
         if (screenH > 0 && screenH < idealWindowH) {
-            scale = screenH / GameScene::DESIGN_HEIGHT;
+            scale = screenH / GameScene::Layout::DESIGN_HEIGHT;
         }
 #endif
         glview = GLViewImpl::createWithRect(
             "CardMatch",
-            cocos2d::Rect(0, 0, GameScene::DESIGN_WIDTH, GameScene::DESIGN_HEIGHT),
+            cocos2d::Rect(0, 0, GameScene::Layout::DESIGN_WIDTH, GameScene::Layout::DESIGN_HEIGHT),
             scale);
 #else
         glview = GLViewImpl::create("CardMatch");
@@ -47,10 +47,10 @@ bool AppDelegate::applicationDidFinishLaunching() {
         director->setOpenGLView(glview);
     }
 
-    director->setDisplayStats(true);
+    director->setDisplayStats(false);
     director->setAnimationInterval(1.0f / 60);
 
-    glview->setDesignResolutionSize(GameScene::DESIGN_WIDTH, GameScene::DESIGN_HEIGHT,
+    glview->setDesignResolutionSize(GameScene::Layout::DESIGN_WIDTH, GameScene::Layout::DESIGN_HEIGHT,
                                     ResolutionPolicy::FIXED_WIDTH);
 
     register_all_packages();

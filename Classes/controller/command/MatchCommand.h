@@ -1,3 +1,4 @@
+// MatchCommand — 桌面牌匹配到手牌堆的可撤销操作
 #pragma once
 #include "ICommand.h"
 #include <vector>
@@ -5,7 +6,6 @@
 class CardModel;
 class GameModel;
 
-// 将桌面牌移动到手牌堆顶部（点击匹配操作）
 class MatchCommand : public ICommand {
 public:
     MatchCommand(GameModel* model, CardModel* card, int tableauIndex);
@@ -16,7 +16,7 @@ public:
     CardModel* getCard()         const { return _card; }
     int        getTableauIndex() const { return _tableauIndex; }
 
-    // execute() 执行后，新变为可操作（被解锁）的桌面牌列表
+    // execute() 执行后，新变为可操作的桌面牌列表
     const std::vector<CardModel*>& getNewlyUnblocked() const { return _newlyUnblocked; }
 
 private:

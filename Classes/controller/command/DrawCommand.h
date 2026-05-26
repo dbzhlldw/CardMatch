@@ -1,10 +1,10 @@
+// DrawCommand — 从备用牌堆抽牌到手牌堆的可撤销操作
 #pragma once
 #include "ICommand.h"
 
 class CardModel;
 class GameModel;
 
-// 从备用牌堆抽一张牌到手牌堆顶部
 class DrawCommand : public ICommand {
 public:
     explicit DrawCommand(GameModel* model);

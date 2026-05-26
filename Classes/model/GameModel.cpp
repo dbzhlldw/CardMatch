@@ -1,3 +1,4 @@
+// GameModel — 发牌初始化、可解性验证、三牌堆、遮挡系统的实现
 #include "GameModel.h"
 #include <algorithm>
 #include <cmath>
@@ -5,26 +6,11 @@
 #include <unordered_set>
 #include <tuple>
 
-GameModel* GameModel::_instance = nullptr;
-
 GameModel::GameModel()
     : _rng(std::random_device{}()) {}
 
-GameModel* GameModel::getInstance() {
-    if (!_instance) _instance = new GameModel();
-    return _instance;
-}
-
 // ---------------------------------------------------------------------------
-// 可解性验证（BFS）
-//
-// 状态三元组：(tableau_mask, hand_value, reserve_depth)
-//   - tableau_mask : 第 i 位为 1 表示槽位 i 的牌仍在桌面（n ≤ 10 → 10 bit）
-//   - hand_value   : 当前手牌堆顶的点数 1-13（4 bit）
-//   - reserve_depth: 备用堆剩余张数 0-6（3 bit）
-// 编码总空间 ≤ 1024 × 13 × 7 = 93184，BFS 在微秒级完成。
-//
-// reserveVals[rn-1] = 顶部（第一张被抽到），reserveVals[0] = 底部（最后抽到）
+// 可解性验证
 // ---------------------------------------------------------------------------
 static bool isSolvable(
     const std::vector<int>&              tableauVals,
@@ -50,16 +36,15 @@ static bool isSolvable(
         auto [mask, hv, rd] = q.front();
         q.pop();
 
-        if (mask == 0) return true; // 桌面清空，通关
+        if (mask == 0) return true;
 
-        // 尝试匹配每张可操作桌面牌
         for (int i = 0; i < n; ++i) {
-            if (!(mask & (1 << i))) continue;           // 已移走
+            if (!(mask & (1 << i))) continue;
             bool accessible = true;
             for (int b : blockedBy[i])
                 if (mask & (1 << b)) { accessible = false; break; }
             if (!accessible) continue;
-            if (std::abs(tableauVals[i] - hv) != 1) continue; // 点数差不为 1
+            if (std::abs(tableauVals[i] - hv) != 1) continue;
 
             int nm = mask & ~(1 << i);
             int nh = tableauVals[i];
@@ -67,32 +52,32 @@ static bool isSolvable(
             if (!visited.count(s)) { visited.insert(s); q.push({nm, nh, rd}); }
         }
 
-        // 尝试从备用堆抽牌（顶部是 reserveVals[rd-1]）
         if (rd > 0) {
             int nh = reserveVals[rd - 1];
             int s  = encode(mask, nh, rd - 1);
             if (!visited.count(s)) { visited.insert(s); q.push({mask, nh, rd - 1}); }
         }
     }
-    return false; // 无解
+    return false;
 }
 
 // ---------------------------------------------------------------------------
 // 初始化一局
 // ---------------------------------------------------------------------------
 
-void GameModel::setupGame(const LayoutDef& layout) {
+void GameModel::setupGame(const LevelDef& level) {
     clearAll();
+    _currentLevel = &level;
 
-    const int RESERVE_COUNT = 6;
-    int tableauSize = (int)layout.size();
+    const LayoutDef& layout = level.layout;
+    int tableauSize   = (int)layout.size();
+    int reserveCount  = level.reserveCount;
+    int initialHand   = level.initialHandCount;
 
-    // 预提取布局的 blockedBy（供 BFS 使用）
     std::vector<std::vector<int>> blockedBy(tableauSize);
     for (int i = 0; i < tableauSize; ++i)
         blockedBy[i] = layout[i].blockedBy;
 
-    // 生成 52 张牌规格
     struct CardSpec { Suit suit; int val; };
     std::vector<CardSpec> deck;
     deck.reserve(52);
@@ -100,33 +85,36 @@ void GameModel::setupGame(const LayoutDef& layout) {
         for (int v = 1; v <= 13; ++v)
             deck.push_back({ (Suit)s, v });
 
-    // 洗牌 + BFS 可解性验证，最多重试 500 次
-    // 发牌顺序：deck[0..tableauSize-1] → 桌面
-    //           deck[tableauSize]       → 初始手牌
-    //           deck[tableauSize+1..]   → 备用堆（back = 顶部）
-    int needed = tableauSize + 1 + RESERVE_COUNT;
-    for (int attempt = 0; attempt < 500; ++attempt) {
-        std::shuffle(deck.begin(), deck.end(), _rng);
-        if ((int)deck.size() < needed) break; // 理论上不会触发
-
-        // 提取值数组供 BFS 使用
+    // 发牌顺序：
+    //   deck[0 .. tableauSize-1]                       → 桌面
+    //   deck[tableauSize .. tableauSize+initialHand-1] → 初始手牌
+    //   deck[tableauSize+initialHand .. ]              → 备用堆
+    auto buildDealValues = [&]() {
         std::vector<int> tableauVals(tableauSize);
         for (int i = 0; i < tableauSize; ++i)
             tableauVals[i] = deck[i].val;
 
-        int handVal = deck[tableauSize].val;
+        int handVal = deck[tableauSize + initialHand - 1].val;
 
-        std::vector<int> reserveVals(RESERVE_COUNT);
-        for (int i = 0; i < RESERVE_COUNT; ++i)
-            reserveVals[i] = deck[tableauSize + 1 + i].val;
-        // reserveVals[RESERVE_COUNT-1] = 顶部（最先抽到）
+        std::vector<int> reserveVals(reserveCount);
+        for (int i = 0; i < reserveCount; ++i)
+            reserveVals[i] = deck[tableauSize + initialHand + i].val;
 
-        if (isSolvable(tableauVals, blockedBy, handVal, reserveVals))
-            break; // 找到可解配置
-        // 未找到则继续重试，最终使用最后一次洗牌结果（极低概率走到这里）
+        return std::make_tuple(tableauVals, handVal, reserveVals);
+    };
+
+    if (level.requireSolvable) {
+        for (;;) {
+            std::shuffle(deck.begin(), deck.end(), _rng);
+
+            auto [tableauVals, handVal, reserveVals] = buildDealValues();
+            if (isSolvable(tableauVals, blockedBy, handVal, reserveVals))
+                break;
+        }
+    } else {
+        std::shuffle(deck.begin(), deck.end(), _rng);
     }
 
-    // 创建所有牌
     _allCards.reserve(52);
     auto make = [&](Suit s, int v, bool up) -> CardModel* {
         auto c = std::make_unique<CardModel>(s, v, up);
@@ -135,30 +123,29 @@ void GameModel::setupGame(const LayoutDef& layout) {
         return raw;
     };
 
-    // 桌面牌：全部正面朝上，遮挡关系只影响能否点击
     _tableau.reserve(tableauSize);
     for (int i = 0; i < tableauSize; ++i) {
-        auto* card = make(deck[i].suit, deck[i].val, true); // 全部 faceUp
+        auto* card = make(deck[i].suit, deck[i].val, true);
         card->setBlockerCount((int)layout[i].blockedBy.size());
         _tableau.push_back(card);
     }
 
-    // 构建逆映射：_unlocks[blocker] = 当 blocker 被移走后需要减少计数的牌
     _unlocks.clear();
     for (int i = 0; i < tableauSize; ++i) {
-        for (int bi : layout[i].blockedBy) {
+        for (int bi : layout[i].blockedBy)
             _unlocks[_tableau[bi]].push_back(_tableau[i]);
-        }
     }
 
-    // 初始手牌（1 张，面朝上）
-    if (tableauSize < (int)deck.size()) {
-        _hand.push_back(make(deck[tableauSize].suit, deck[tableauSize].val, true));
+    for (int i = 0; i < initialHand; ++i) {
+        int idx = tableauSize + i;
+        if (idx < (int)deck.size())
+            _hand.push_back(make(deck[idx].suit, deck[idx].val, true));
     }
 
-    // 备用牌堆：取 RESERVE_COUNT 张，面朝下，按顺序压入（最后一张在顶部）
-    for (int i = tableauSize + 1; i < tableauSize + 1 + RESERVE_COUNT && i < (int)deck.size(); ++i) {
-        _reserve.push_back(make(deck[i].suit, deck[i].val, false));
+    for (int i = 0; i < reserveCount; ++i) {
+        int idx = tableauSize + initialHand + i;
+        if (idx < (int)deck.size())
+            _reserve.push_back(make(deck[idx].suit, deck[idx].val, false));
     }
 }
 
@@ -168,6 +155,7 @@ void GameModel::clearAll() {
     _reserve.clear();
     _allCards.clear();
     _unlocks.clear();
+    _currentLevel = nullptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -201,21 +189,17 @@ std::vector<CardModel*> GameModel::onTableauCardRemoved(CardModel* card) {
     for (auto* blocked : it->second) {
         int before = blocked->getBlockerCount();
         blocked->decrementBlocker();
-        // 仅当本次遮挡解除后才算「新解锁」，避免重复记录导致撤销时误清回调
-        if (before > 0 && blocked->isAccessible()) {
+        if (before > 0 && blocked->isAccessible())
             newlyUnblocked.push_back(blocked);
-        }
     }
     return newlyUnblocked;
 }
 
 void GameModel::onTableauCardRestored(CardModel* card) {
-    // 恢复 card 对所有它曾遮挡的牌的遮挡计数
     auto it = _unlocks.find(card);
     if (it != _unlocks.end()) {
-        for (auto* blocked : it->second) {
+        for (auto* blocked : it->second)
             blocked->incrementBlocker();
-        }
     }
 }
 

@@ -1,3 +1,4 @@
+// CardDef — 扑克牌领域基础：花色、点数及字符串工具，与布局/关卡无关
 #pragma once
 #include <string>
 
