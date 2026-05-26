@@ -1,4 +1,4 @@
-// DrawCommand — 从备用牌堆抽牌到手牌堆的可撤销操作
+// DrawCommand — 备用牌堆顶牌入手牌堆的实现
 #pragma once
 #include "ICommand.h"
 

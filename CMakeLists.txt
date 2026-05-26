@@ -50,30 +50,43 @@ list(APPEND GAME_SOURCE
      Classes/AppDelegate.cpp
      Classes/data/LayoutDef_Pyramid.cpp
      Classes/data/Levels.cpp
+     Classes/data/CardAppearance.cpp
      Classes/session/GameSession.cpp
      Classes/presenter/GamePresenter.cpp
      Classes/model/GameModel.cpp
      Classes/controller/command/MatchCommand.cpp
      Classes/controller/command/DrawCommand.cpp
      Classes/controller/GameController.cpp
+     Classes/controller/cards/MatchTableauHandler.cpp
+     Classes/controller/cards/TableauCardHandlerRegistry.cpp
+     Classes/controller/history/CommandHistory.cpp
+     Classes/controller/history/UndoManager.cpp
      Classes/view/CardView.cpp
      Classes/view/GameScene.cpp
      )
 list(APPEND GAME_HEADER
      Classes/AppDelegate.h
      Classes/data/CardDef.h
+     Classes/data/CardAppearance.h
      Classes/data/LayoutDef.h
      Classes/data/LayoutDef_Pyramid.h
      Classes/data/LevelDef.h
      Classes/data/Levels.h
      Classes/session/GameSession.h
      Classes/presenter/GamePresenter.h
+     Classes/presenter/ViewTypes.h
      Classes/model/CardModel.h
      Classes/model/GameModel.h
      Classes/controller/command/ICommand.h
      Classes/controller/command/MatchCommand.h
      Classes/controller/command/DrawCommand.h
      Classes/controller/GameController.h
+     Classes/controller/TableauActionResult.h
+     Classes/controller/cards/ITableauCardHandler.h
+     Classes/controller/cards/MatchTableauHandler.h
+     Classes/controller/cards/TableauCardHandlerRegistry.h
+     Classes/controller/history/CommandHistory.h
+     Classes/controller/history/UndoManager.h
      Classes/view/CardView.h
      Classes/view/GameScene.h
      )

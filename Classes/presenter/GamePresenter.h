@@ -1,39 +1,10 @@
-// GamePresenter — 布局计算、触摸决策、驱动 Session/Controller，不算动画，只给目标坐标
+// GamePresenter — 界面与游戏内核的隔离层：GameScene 不直接访问 Model/Controller，只通过本类处理点击并获取显示数据
 #pragma once
 #include <unordered_map>
-#include <vector>
-#include "data/LevelDef.h"
+#include "presenter/ViewTypes.h"
 #include "session/GameSession.h"
 
 class CardModel;
-
-// 二维坐标（设计分辨率，与 cocos Vec2 解耦）
-struct Vec2f {
-    float x = 0.f;
-    float y = 0.f;
-};
-
-// 单张牌的布局结果，供 GameScene 应用位置与 z-order
-struct CardLayoutSpec {
-    CardModel* card   = nullptr;
-    Vec2f      position;
-    int        zOrder = 0;
-    bool       faceUp = true;
-};
-
-// Scene 几何 hit-test 后的桌面牌候选，Presenter 据此选最终目标
-struct TableauHitCandidate {
-    CardModel* card      = nullptr;
-    int        zOrder    = 0;
-    bool       matchable = false;
-};
-
-// 用户操作结果：是否成功、飞行动画牌、是否整局重开
-struct PresenterOutcome {
-    bool       success     = false;
-    CardModel* flyingCard  = nullptr; // 需要做飞行动画的牌
-    bool       fullRestart = false;
-};
 
 class GamePresenter {
 public:
@@ -47,6 +18,17 @@ public:
 
     explicit GamePresenter(const LevelDef& level);
 
+    ViewState buildViewState() const;
+
+    PresenterOutcome onTableauTapped(int cardId);
+    PresenterOutcome onReserveTapped();
+    PresenterOutcome onUndoTapped();
+    PresenterOutcome onRestartTapped();
+
+private:
+    GameSession _session;
+    std::unordered_map<int, int> _slotIndex; // cardId → layout 槽位
+
     GameModel&            model();
     const GameModel&      model() const;
     GameController&       controller();
@@ -54,36 +36,17 @@ public:
     const LevelDef&       level() const;
 
     void restart();
+    void registerTableauSlotsFromModel();
+    void clearSlotRegistry();
 
-    // --- 布局 ---
+    CardModel* cardById(int cardId) const;
+    CardViewSpec makeSpec(CardModel* card, CardPile pile, int stackIndex, int stackTotal) const;
+    std::vector<CardModel*> getDirectBlockers(CardModel* card) const;
+
     Vec2f handPilePosition() const;
     Vec2f undoButtonPosition() const;
     Vec2f restartButtonPosition() const;
-    std::vector<CardLayoutSpec> buildCardLayout() const;
-    bool isRestartButtonVisible() const;
-
-    // 桌面牌槽位索引（发牌时固定，不随 remove/insert 改变）
-    void registerTableauSlot(CardModel* card, int slotIndex);
-    void clearSlotRegistry();
-
-    // --- 触摸决策（Scene 负责几何检测，Presenter 负责选牌与规则）---
-    CardModel* pickTableauCard(const std::vector<TableauHitCandidate>& candidates) const;
-    std::vector<CardModel*> getDirectBlockers(CardModel* card) const;
-    CardModel* reserveTopCard() const;
-    bool       isReserveTop(CardModel* card) const;
-
-    // --- 用户操作 ---
-    bool canUndo() const;
-    PresenterOutcome onTableauTapped(CardModel* card);
-    PresenterOutcome onReserveTapped();
-    PresenterOutcome onUndoTapped();
-    PresenterOutcome onRestartTapped();
-
-private:
-    GameSession _session;
-    std::unordered_map<CardModel*, int> _slotIndex;
-
     Vec2f reservePositionFor(int index, int total) const;
-    Vec2f slotPositionFor(CardModel* card) const;
-    int   slotZOrderFor(CardModel* card) const;
+    Vec2f slotPositionFor(int slotIndex) const;
+    int   slotZOrderFor(int slotIndex) const;
 };

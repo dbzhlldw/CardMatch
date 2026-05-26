@@ -1,4 +1,4 @@
-// GameSession — 构造时发牌、restart 时清 Command 栈并重发牌
+// GameSession — 一局游戏的会话容器：绑定 LevelDef + Model + Controller，生命周期一致
 #include "GameSession.h"
 
 GameSession::GameSession(const LevelDef& level)

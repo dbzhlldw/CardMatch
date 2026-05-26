@@ -1,4 +1,4 @@
-// GameModel — 发牌初始化、可解性验证、三牌堆、遮挡系统的实现
+// GameModel — 一局游戏的牌堆状态：桌面/手牌/备用堆、发牌、遮挡、可解性验证
 #include "GameModel.h"
 #include <algorithm>
 #include <cmath>
@@ -116,8 +116,8 @@ void GameModel::setupGame(const LevelDef& level) {
     }
 
     _allCards.reserve(52);
-    auto make = [&](Suit s, int v, bool up) -> CardModel* {
-        auto c = std::make_unique<CardModel>(s, v, up);
+    auto make = [&](Suit s, int v) -> CardModel* {
+        auto c = std::make_unique<CardModel>(_nextCardId++, s, v);
         auto* raw = c.get();
         _allCards.push_back(std::move(c));
         return raw;
@@ -125,7 +125,7 @@ void GameModel::setupGame(const LevelDef& level) {
 
     _tableau.reserve(tableauSize);
     for (int i = 0; i < tableauSize; ++i) {
-        auto* card = make(deck[i].suit, deck[i].val, true);
+        auto* card = make(deck[i].suit, deck[i].val);
         card->setBlockerCount((int)layout[i].blockedBy.size());
         _tableau.push_back(card);
     }
@@ -139,13 +139,13 @@ void GameModel::setupGame(const LevelDef& level) {
     for (int i = 0; i < initialHand; ++i) {
         int idx = tableauSize + i;
         if (idx < (int)deck.size())
-            _hand.push_back(make(deck[idx].suit, deck[idx].val, true));
+            _hand.push_back(make(deck[idx].suit, deck[idx].val));
     }
 
     for (int i = 0; i < reserveCount; ++i) {
         int idx = tableauSize + initialHand + i;
         if (idx < (int)deck.size())
-            _reserve.push_back(make(deck[idx].suit, deck[idx].val, false));
+            _reserve.push_back(make(deck[idx].suit, deck[idx].val));
     }
 }
 
@@ -156,6 +156,7 @@ void GameModel::clearAll() {
     _allCards.clear();
     _unlocks.clear();
     _currentLevel = nullptr;
+    _nextCardId = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -175,6 +176,13 @@ int GameModel::getTableauIndex(CardModel* card) const {
         if (_tableau[i] == card) return i;
     }
     return -1;
+}
+
+CardModel* GameModel::getCardById(int id) const {
+    for (const auto& card : _allCards) {
+        if (card->getId() == id) return card.get();
+    }
+    return nullptr;
 }
 
 // ---------------------------------------------------------------------------
@@ -212,7 +220,6 @@ CardModel* GameModel::getHandTop() const {
 }
 
 void GameModel::pushHand(CardModel* card) {
-    card->setFaceUp(true);
     _hand.push_back(card);
 }
 
@@ -235,11 +242,9 @@ CardModel* GameModel::drawFromReserve() {
     if (_reserve.empty()) return nullptr;
     auto card = _reserve.back();
     _reserve.pop_back();
-    card->setFaceUp(true);
     return card;
 }
 
 void GameModel::pushToReserve(CardModel* card) {
-    card->setFaceUp(false);
     _reserve.push_back(card);
 }

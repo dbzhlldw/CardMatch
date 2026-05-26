@@ -1,18 +1,18 @@
-// CardModel — 单张牌的数据：花色、点数、正反面、遮挡计数
+// CardModel — 单张牌的状态实例：ID、类型、花色、点数、遮挡计数
 #pragma once
 #include "data/CardDef.h"
 
 class CardModel {
 public:
-    CardModel(Suit suit, int value, bool faceUp = true)
-        : _suit(suit), _value(value), _faceUp(faceUp) {}
+    CardModel(int id, Suit suit, int value, CardKind kind = CardKind::Normal)
+        : _id(id), _kind(kind), _suit(suit), _value(value) {}
 
-    Suit getSuit()  const { return _suit; }
-    int  getValue() const { return _value; }
-    bool isFaceUp() const { return _faceUp; }
-    void setFaceUp(bool v)  { _faceUp = v; }
+    int      getId()    const { return _id; }
+    CardKind getKind()  const { return _kind; }
+    void     setKind(CardKind kind) { _kind = kind; }
+    Suit     getSuit()  const { return _suit; }
+    int      getValue() const { return _value; }
 
-    // 遮挡计数：当前还有几张牌压在上面（0 = 可操作）
     int  getBlockerCount()  const { return _blockerCount; }
     bool isAccessible()     const { return _blockerCount == 0; }
     void setBlockerCount(int n)   { _blockerCount = n; }
@@ -20,8 +20,9 @@ public:
     void decrementBlocker()       { if (_blockerCount > 0) --_blockerCount; }
 
 private:
-    Suit _suit;
-    int  _value;
-    bool _faceUp;
-    int  _blockerCount = 0;
+    int      _id;
+    CardKind _kind;
+    Suit     _suit;
+    int      _value;
+    int      _blockerCount = 0;
 };

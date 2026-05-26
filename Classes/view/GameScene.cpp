@@ -1,7 +1,6 @@
-// GameScene — 场景初始化、CardView 生命周期、布局动画与触摸的实现
+// GameScene — 主场景 View：cocos 节点、动画、触摸
 #include "GameScene.h"
 #include "CardView.h"
-#include "model/CardModel.h"
 #include "data/Levels.h"
 #include <algorithm>
 #include <functional>
@@ -12,12 +11,12 @@ const float GameScene::ANIM_DURATION  = 0.25f;
 const int   GameScene::FLYING_Z_ORDER = 200;
 
 namespace {
-const float REJECT_SHAKE_OFFSET    = 14.f;
-const float REJECT_SHAKE_SEGMENT   = 0.055f;
-const int   REJECT_SHAKE_SEGMENTS  = 5; // 左右各晃两下，回到原位
-const float BLOCKED_BUMP_DROP      = 10.f;
-const float BLOCKED_BUMP_SEGMENT   = 0.07f;
-const int   BLOCKED_BUMP_SEGMENTS  = 4; // 垂直轻弹两下，回到原位
+const float REJECT_SHAKE_OFFSET     = 14.f;
+const float REJECT_SHAKE_SEGMENT    = 0.055f;
+const int   REJECT_SHAKE_SEGMENTS   = 5;
+const float BLOCKED_BUMP_DROP       = 10.f;
+const float BLOCKED_BUMP_SEGMENT    = 0.07f;
+const int   BLOCKED_BUMP_SEGMENTS   = 4;
 const float BLOCKER_HIGHLIGHT_SCALE = 1.05f;
 const float BLOCKER_HIGHLIGHT_SEG   = 0.1f;
 } // namespace
@@ -130,6 +129,7 @@ bool GameScene::init() {
     if (!Scene::init()) return false;
 
     _presenter = std::make_unique<GamePresenter>(Levels::PYRAMID_TEST);
+    _viewState   = _presenter->buildViewState();
 
     auto tableauBg = LayerColor::create(hexColor(0x7388A3), Layout::DESIGN_WIDTH, Layout::TABLEAU_AREA_H);
     tableauBg->setPosition(Vec2(0.f, Layout::PILE_AREA_H));
@@ -140,9 +140,7 @@ bool GameScene::init() {
     addChild(pileBg, -1);
 
     createAllCardViews();
-    rebuildViewStacksFromModel();
-    applyAllLayouts(false);
-    syncAllInteractable();
+    applyViewState(_viewState, false);
     setupPileButtons();
     setupRestartButton();
     setupSceneTouch();
@@ -150,52 +148,28 @@ bool GameScene::init() {
     return true;
 }
 
-// ---------------------------------------------------------------------------
-// 初始化
-// ---------------------------------------------------------------------------
-
 void GameScene::createAllCardViews() {
-    const auto& tableau = _presenter->model().getTableau();
-    const auto& level   = _presenter->level();
-
-    for (int i = 0; i < (int)tableau.size(); i++) {
-        CardModel* card = tableau[i];
-        _presenter->registerTableauSlot(card, i);
-
-        auto view = CardView::create(card);
+    for (const auto& spec : _viewState.cards) {
+        auto view = CardView::create(spec.cardId, spec.kind, spec.suit, spec.value);
         view->setAnchorPoint(Vec2(0.5f, 0.5f));
-        addChild(view, level.layout[i].zOrder);
-        _cardViewMap[card] = view;
+        addChild(view, spec.zOrder);
+        _cardViewMap[spec.cardId] = view;
     }
-
-    for (auto* card : _presenter->model().getHand()) {
-        auto view = CardView::create(card);
-        view->setAnchorPoint(Vec2(0.5f, 0.5f));
-        addChild(view, 10);
-        _cardViewMap[card] = view;
-    }
-
-    for (auto* card : _presenter->model().getReserve()) {
-        auto view = CardView::create(card);
-        view->setAnchorPoint(Vec2(0.5f, 0.5f));
-        addChild(view, 10);
-        _cardViewMap[card] = view;
-    }
+    syncPileCache(_viewState);
 }
 
 void GameScene::destroyAllCardViews() {
     for (auto& kv : _cardViewMap)
         kv.second->removeFromParent();
     _cardViewMap.clear();
-    _tableauViews.clear();
-    _handViewStack.clear();
-    _reserveViewStack.clear();
-    _touchTarget = nullptr;
+    _cardPileById.clear();
+    _touchTargetCardId = -1;
+    _reserveTopCardId  = -1;
 }
 
 void GameScene::setupPileButtons() {
     const float TARGET_SIZE = 120.f;
-    Vec2f pos = _presenter->undoButtonPosition();
+    Vec2f pos = _viewState.undoButtonPosition;
 
     auto button = createIconButton("res/other/undo.png", TARGET_SIZE, IconShadowStyle::Circle);
     if (!button.root) return;
@@ -204,12 +178,12 @@ void GameScene::setupPileButtons() {
     addChild(button.root, 50);
 
     addIconTouchHandler(button.root, button.hitHalfW, button.hitHalfH, _eventDispatcher,
-                        [this]() { onUndoClicked(); });
+                        [this]() { onUndoTapped(); });
 }
 
 void GameScene::setupRestartButton() {
     const float TARGET_SIZE = 140.f;
-    Vec2f pos = _presenter->restartButtonPosition();
+    Vec2f pos = _viewState.restartButtonPosition;
 
     auto button = createIconButton("res/other/reset.png", TARGET_SIZE, IconShadowStyle::Sprite);
     if (!button.root) return;
@@ -218,7 +192,7 @@ void GameScene::setupRestartButton() {
     _restartHitHalfW = button.hitHalfW;
     _restartHitHalfH = button.hitHalfH;
     _restartButton->setPosition(Vec2(pos.x, pos.y));
-    _restartButton->setVisible(false);
+    _restartButton->setVisible(_viewState.showRestartButton);
     addChild(_restartButton, 101);
 
     auto listener = EventListenerTouchOneByOne::create();
@@ -230,14 +204,14 @@ void GameScene::setupRestartButton() {
     listener->onTouchEnded = [this](Touch* t, Event*) {
         if (_restartButton && _restartButton->isVisible()
             && hitTestCenteredNode(_restartButton, _restartHitHalfW, _restartHitHalfH, t))
-            onRestartClicked();
+            onRestartTapped();
     };
     _eventDispatcher->addEventListenerWithSceneGraphPriority(listener, _restartButton);
 }
 
 void GameScene::updateRestartButtonVisibility() {
     if (!_restartButton) return;
-    _restartButton->setVisible(_presenter->isRestartButtonVisible());
+    _restartButton->setVisible(_viewState.showRestartButton);
 }
 
 void GameScene::setupSceneTouch() {
@@ -248,72 +222,67 @@ void GameScene::setupSceneTouch() {
         if (_inputLocked) return false;
 
         Vec2 pos = t->getLocation();
-        if (auto* reserveTop = hitTestReserveTop(pos)) {
-            _touchTarget = reserveTop;
+        int reserveId = hitTestReserveTopCardId(pos);
+        if (reserveId >= 0) {
+            _touchTargetCardId = reserveId;
             return true;
         }
-        if (auto* tableau = hitTestTableau(pos)) {
-            _touchTarget = tableau;
+        int tableauId = hitTestTableauCardId(pos);
+        if (tableauId >= 0) {
+            _touchTargetCardId = tableauId;
             return true;
         }
         return false;
     };
 
     listener->onTouchEnded = [this](Touch* t, Event*) {
-        if (!_touchTarget || _inputLocked) {
-            _touchTarget = nullptr;
+        if (_touchTargetCardId < 0 || _inputLocked) {
+            _touchTargetCardId = -1;
             return;
         }
+
         Vec2 pos = t->getLocation();
-        CardView* hit = hitTestReserveTop(pos);
-        if (!hit) hit = hitTestTableau(pos);
-        if (hit == _touchTarget) {
-            if (_presenter->isReserveTop(hit->getModel()))
-                onReserveClicked();
+        int hitId = hitTestReserveTopCardId(pos);
+        if (hitId < 0) hitId = hitTestTableauCardId(pos);
+
+        if (hitId == _touchTargetCardId) {
+            if (hitId == _reserveTopCardId)
+                onReserveTapped();
             else
-                onTableauCardClicked(hit);
+                onTableauTapped(hitId);
         }
-        _touchTarget = nullptr;
+        _touchTargetCardId = -1;
     };
 
     _eventDispatcher->addEventListenerWithSceneGraphPriority(listener, this);
 }
 
-// ---------------------------------------------------------------------------
-// Presenter 驱动的 View 同步
-// ---------------------------------------------------------------------------
-
-void GameScene::rebuildViewStacksFromModel() {
-    _handViewStack.clear();
-    _reserveViewStack.clear();
-    _tableauViews.clear();
-
-    for (auto* card : _presenter->model().getHand()) {
-        if (auto* view = viewForCard(card)) _handViewStack.push_back(view);
-    }
-    for (auto* card : _presenter->model().getReserve()) {
-        if (auto* view = viewForCard(card)) _reserveViewStack.push_back(view);
-    }
-    for (auto* card : _presenter->model().getTableau()) {
-        if (auto* view = viewForCard(card)) _tableauViews.push_back(view);
-    }
+void GameScene::syncPileCache(const ViewState& state) {
+    _cardPileById.clear();
+    for (const auto& spec : state.cards)
+        _cardPileById[spec.cardId] = spec.pile;
+    _reserveTopCardId = state.reserveTopCardId;
 }
 
-void GameScene::applyAllLayouts(bool animate, CardView* flyingView) {
-    auto place = [&](CardView* view, const Vec2& target, int finalZ, bool faceUp) {
+void GameScene::applyViewState(const ViewState& state, bool animate, int flyingCardId) {
+    _viewState = state;
+    syncPileCache(state);
+    updateRestartButtonVisibility();
+
+    auto place = [&](CardView* view, const CardViewSpec& spec) {
+        Vec2 target(spec.position.x, spec.position.y);
         view->stopAllActions();
-        view->setFaceUp(faceUp);
         view->setVisible(true);
 
-        bool isFlying = animate && flyingView && view == flyingView;
-        view->setLocalZOrder(isFlying ? FLYING_Z_ORDER : finalZ);
+        bool isFlying = animate && flyingCardId >= 0 && view->getCardId() == flyingCardId;
+        view->setLocalZOrder(isFlying ? FLYING_Z_ORDER : spec.zOrder);
 
         bool needsMove = view->getPosition().distance(target) > 1.f;
         if (animate && needsMove) {
             if (isFlying) {
                 view->runAction(Sequence::create(
                     MoveTo::create(ANIM_DURATION, target),
-                    CallFunc::create([view, finalZ]() { view->setLocalZOrder(finalZ); }),
+                    CallFunc::create([view, spec]() { view->setLocalZOrder(spec.zOrder); }),
                     nullptr));
             } else {
                 view->runAction(MoveTo::create(ANIM_DURATION, target));
@@ -323,64 +292,54 @@ void GameScene::applyAllLayouts(bool animate, CardView* flyingView) {
         }
     };
 
-    for (const auto& spec : _presenter->buildCardLayout()) {
-        CardView* view = viewForCard(spec.card);
+    for (const auto& spec : state.cards) {
+        CardView* view = viewForCardId(spec.cardId);
         if (!view) continue;
-        place(view, Vec2(spec.position.x, spec.position.y), spec.zOrder, spec.faceUp);
+        place(view, spec);
     }
 }
 
-void GameScene::syncAllInteractable() {
-    for (auto& kv : _cardViewMap)
-        kv.second->setClickCallback(nullptr);
-}
-
-CardView* GameScene::viewForCard(CardModel* card) const {
-    if (!card) return nullptr;
-    auto it = _cardViewMap.find(card);
+CardView* GameScene::viewForCardId(int cardId) const {
+    if (cardId < 0) return nullptr;
+    auto it = _cardViewMap.find(cardId);
     return it != _cardViewMap.end() ? it->second : nullptr;
 }
 
-// ---------------------------------------------------------------------------
-// Hit test（几何检测在 Scene，选牌决策在 Presenter）
-// ---------------------------------------------------------------------------
+int GameScene::hitTestTableauCardId(const Vec2& scenePos) const {
+    int bestId = -1;
+    int bestZ  = -1;
 
-CardView* GameScene::hitTestTableau(const Vec2& scenePos) const {
-    CardModel* picked = nullptr;
-    int bestZ = -1;
+    for (const auto& kv : _cardViewMap) {
+        if (_cardPileById.count(kv.first) == 0
+            || _cardPileById.at(kv.first) != CardPile::Tableau)
+            continue;
 
-    for (auto* card : _presenter->model().getTableau()) {
-        CardView* view = viewForCard(card);
-        if (!view) continue;
-
+        CardView* view = kv.second;
         Vec2 local = view->convertToNodeSpace(scenePos);
         Rect bounds(0, 0, CardView::CARD_SIZE.width, CardView::CARD_SIZE.height);
         if (!bounds.containsPoint(local)) continue;
 
         int z = view->getLocalZOrder();
         if (z > bestZ) {
-            bestZ = z;
-            picked = card;
+            bestZ  = z;
+            bestId = kv.first;
         }
     }
 
-    return viewForCard(picked);
+    return bestId;
 }
 
-CardView* GameScene::hitTestReserveTop(const Vec2& scenePos) const {
-    CardModel* top = _presenter->reserveTopCard();
-    CardView* view = viewForCard(top);
-    if (!view) return nullptr;
+int GameScene::hitTestReserveTopCardId(const Vec2& scenePos) const {
+    if (_reserveTopCardId < 0) return -1;
+
+    CardView* view = viewForCardId(_reserveTopCardId);
+    if (!view) return -1;
 
     Vec2 local = view->convertToNodeSpace(scenePos);
     Rect bounds(0, 0, CardView::CARD_SIZE.width, CardView::CARD_SIZE.height);
-    if (bounds.containsPoint(local)) return view;
-    return nullptr;
+    if (!bounds.containsPoint(local)) return -1;
+    return _reserveTopCardId;
 }
-
-// ---------------------------------------------------------------------------
-// 用户交互
-// ---------------------------------------------------------------------------
 
 void GameScene::lockInput() {
     _inputLocked = true;
@@ -391,7 +350,8 @@ void GameScene::unlockInput() {
     _inputLocked = false;
 }
 
-void GameScene::playRejectShake(CardView* view) {
+void GameScene::playRejectShake(int cardId) {
+    CardView* view = viewForCardId(cardId);
     if (!view) return;
 
     view->stopAllActions();
@@ -410,7 +370,8 @@ void GameScene::playRejectShake(CardView* view) {
                  seg * REJECT_SHAKE_SEGMENTS + 0.05f, "unlock_input");
 }
 
-void GameScene::playBlockerHighlight(CardView* view) {
+void GameScene::playBlockerHighlight(int cardId) {
+    CardView* view = viewForCardId(cardId);
     if (!view) return;
 
     view->runAction(Sequence::create(
@@ -419,8 +380,9 @@ void GameScene::playBlockerHighlight(CardView* view) {
         nullptr));
 }
 
-void GameScene::playBlockedFeedback(CardView* view, CardModel* card) {
-    if (!view || !card) return;
+void GameScene::playBlockedFeedback(int cardId, const std::vector<int>& blockerIds) {
+    CardView* view = viewForCardId(cardId);
+    if (!view) return;
 
     view->stopAllActions();
     view->setScale(1.f);
@@ -435,10 +397,8 @@ void GameScene::playBlockedFeedback(CardView* view, CardModel* card) {
         MoveBy::create(seg, Vec2(0, drop * 0.6f)),
         nullptr));
 
-    for (CardModel* blocker : _presenter->getDirectBlockers(card)) {
-        if (CardView* blockerView = viewForCard(blocker))
-            playBlockerHighlight(blockerView);
-    }
+    for (int blockerId : blockerIds)
+        playBlockerHighlight(blockerId);
 
     const float bumpDuration = seg * BLOCKED_BUMP_SEGMENTS;
     const float highlightDuration = BLOCKER_HIGHLIGHT_SEG * 2.f;
@@ -446,63 +406,55 @@ void GameScene::playBlockedFeedback(CardView* view, CardModel* card) {
                  std::max(bumpDuration, highlightDuration) + 0.05f, "unlock_input");
 }
 
-void GameScene::refreshViewAfterAction(const PresenterOutcome& outcome) {
+void GameScene::handlePresenterOutcome(const PresenterOutcome& outcome) {
+    switch (outcome.tableauResult) {
+        case TableauTapResult::Blocked:
+            playBlockedFeedback(outcome.primaryCardId, outcome.highlightCardIds);
+            return;
+        case TableauTapResult::NoMatch:
+            playRejectShake(outcome.primaryCardId);
+            return;
+        default:
+            break;
+    }
+
     if (!outcome.success) return;
 
     if (outcome.fullRestart) {
+        _viewState = _presenter->buildViewState();
         destroyAllCardViews();
         createAllCardViews();
-        rebuildViewStacksFromModel();
-        applyAllLayouts(false);
-        syncAllInteractable();
-        updateRestartButtonVisibility();
+        applyViewState(_viewState, false);
         return;
     }
 
     lockInput();
-    CardView* flying = viewForCard(outcome.flyingCard);
-    rebuildViewStacksFromModel();
-    applyAllLayouts(true, flying);
-    syncAllInteractable();
+    applyViewState(_presenter->buildViewState(), true, outcome.flyingCardId);
     scheduleOnce([this](float) {
         unlockInput();
         updateRestartButtonVisibility();
     }, ANIM_DURATION + 0.05f, "unlock_input");
 }
 
-void GameScene::onTableauCardClicked(CardView* view) {
-    if (_inputLocked || !view) return;
-
-    CardModel* card = view->getModel();
-    if (!card) return;
-
-    if (!card->isAccessible()) {
-        playBlockedFeedback(view, card);
-        return;
-    }
-
-    if (!_presenter->controller().canMatchTableau(card)) {
-        playRejectShake(view);
-        return;
-    }
-
-    refreshViewAfterAction(_presenter->onTableauTapped(card));
-}
-
-void GameScene::onReserveClicked() {
+void GameScene::onTableauTapped(int cardId) {
     if (_inputLocked) return;
-    refreshViewAfterAction(_presenter->onReserveTapped());
+    handlePresenterOutcome(_presenter->onTableauTapped(cardId));
 }
 
-void GameScene::onUndoClicked() {
+void GameScene::onReserveTapped() {
     if (_inputLocked) return;
-    refreshViewAfterAction(_presenter->onUndoTapped());
+    handlePresenterOutcome(_presenter->onReserveTapped());
 }
 
-void GameScene::onRestartClicked() {
+void GameScene::onUndoTapped() {
+    if (_inputLocked) return;
+    handlePresenterOutcome(_presenter->onUndoTapped());
+}
+
+void GameScene::onRestartTapped() {
     if (_inputLocked) return;
 
     lockInput();
-    refreshViewAfterAction(_presenter->onRestartTapped());
+    handlePresenterOutcome(_presenter->onRestartTapped());
     unlockInput();
 }

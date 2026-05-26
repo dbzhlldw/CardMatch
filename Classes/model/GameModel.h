@@ -40,9 +40,12 @@ public:
     const std::vector<CardModel*>& getReserve() const { return _reserve; }
     const std::vector<CardModel*>& getHand()    const { return _hand; }
 
+    CardModel* getCardById(int id) const;
+
     bool isTableauClear() const { return _tableau.empty(); }
 
 private:
+    int _nextCardId = 0;
     std::vector<CardModel*>              _tableau;
     std::vector<CardModel*>              _hand;
     std::vector<CardModel*>              _reserve;

@@ -1,11 +1,13 @@
-// GamePresenter — 布局计算、触摸决策、驱动 Session/Controller，不算动画，只给目标坐标
+// GamePresenter — 界面与游戏内核的隔离层：GameScene 不直接访问 Model/Controller，只通过本类处理点击并获取显示数据
 #include "GamePresenter.h"
 #include "model/GameModel.h"
 #include "model/CardModel.h"
 #include "controller/GameController.h"
 
 GamePresenter::GamePresenter(const LevelDef& level)
-    : _session(level) {}
+    : _session(level) {
+    registerTableauSlotsFromModel();
+}
 
 GameModel& GamePresenter::model() { return _session.model(); }
 const GameModel& GamePresenter::model() const { return _session.model(); }
@@ -16,14 +18,21 @@ const LevelDef& GamePresenter::level() const { return _session.level(); }
 void GamePresenter::restart() {
     _session.restart();
     clearSlotRegistry();
+    registerTableauSlotsFromModel();
 }
 
-void GamePresenter::registerTableauSlot(CardModel* card, int slotIndex) {
-    _slotIndex[card] = slotIndex;
+void GamePresenter::registerTableauSlotsFromModel() {
+    const auto& tableau = model().getTableau();
+    for (int i = 0; i < (int)tableau.size(); ++i)
+        _slotIndex[tableau[i]->getId()] = i;
 }
 
 void GamePresenter::clearSlotRegistry() {
     _slotIndex.clear();
+}
+
+CardModel* GamePresenter::cardById(int cardId) const {
+    return model().getCardById(cardId);
 }
 
 Vec2f GamePresenter::handPilePosition() const {
@@ -45,70 +54,74 @@ Vec2f GamePresenter::reservePositionFor(int index, int total) const {
     return { base.x - fromTop * Layout::RESERVE_STACK_OFFSET, base.y };
 }
 
-Vec2f GamePresenter::slotPositionFor(CardModel* card) const {
-    auto it = _slotIndex.find(card);
-    if (it == _slotIndex.end()) return {};
-    const SlotDef& slot = level().layout[it->second];
+Vec2f GamePresenter::slotPositionFor(int slotIndex) const {
+    if (slotIndex < 0 || slotIndex >= (int)level().layout.size()) return {};
+    const SlotDef& slot = level().layout[slotIndex];
     return { slot.x, slot.y };
 }
 
-int GamePresenter::slotZOrderFor(CardModel* card) const {
-    auto it = _slotIndex.find(card);
-    if (it == _slotIndex.end()) return 0;
-    return level().layout[it->second].zOrder;
+int GamePresenter::slotZOrderFor(int slotIndex) const {
+    if (slotIndex < 0 || slotIndex >= (int)level().layout.size()) return 0;
+    return level().layout[slotIndex].zOrder;
 }
 
-std::vector<CardLayoutSpec> GamePresenter::buildCardLayout() const {
-    const auto& m = model();
-    std::vector<CardLayoutSpec> layout;
+CardViewSpec GamePresenter::makeSpec(CardModel* card, CardPile pile,
+                                     int stackIndex, int stackTotal) const {
+    CardViewSpec spec;
+    spec.cardId = card->getId();
+    spec.kind   = card->getKind();
+    spec.suit   = card->getSuit();
+    spec.value  = card->getValue();
+    spec.pile   = pile;
 
-    const auto& hand = m.getHand();
-    for (int i = 0; i < (int)hand.size(); ++i) {
-        layout.push_back({ hand[i], handPilePosition(), 10 + i, true });
+    auto slotIt = _slotIndex.find(card->getId());
+    if (slotIt != _slotIndex.end())
+        spec.slotIndex = slotIt->second;
+
+    if (pile == CardPile::Tableau && slotIt != _slotIndex.end()) {
+        spec.position = slotPositionFor(spec.slotIndex);
+        spec.zOrder   = slotZOrderFor(spec.slotIndex);
+    } else if (pile == CardPile::Hand) {
+        spec.position = handPilePosition();
+        spec.zOrder   = 10 + stackIndex;
+    } else {
+        spec.position = reservePositionFor(stackIndex, stackTotal);
+        spec.zOrder   = 10 + stackIndex;
     }
 
-    const auto& reserve = m.getReserve();
-    const int rn = (int)reserve.size();
-    for (int i = 0; i < rn; ++i) {
-        layout.push_back({ reserve[i], reservePositionFor(i, rn), 10 + i, true });
-    }
-
-    for (auto* card : m.getTableau()) {
-        layout.push_back({ card, slotPositionFor(card), slotZOrderFor(card), true });
-    }
-
-    return layout;
+    return spec;
 }
 
-bool GamePresenter::isRestartButtonVisible() const {
-    return model().isTableauClear();
-}
+ViewState GamePresenter::buildViewState() const {
+    ViewState state;
+    state.undoButtonPosition    = undoButtonPosition();
+    state.restartButtonPosition = restartButtonPosition();
+    state.showRestartButton     = model().isTableauClear();
+    state.canUndo               = controller().canUndo();
 
-CardModel* GamePresenter::pickTableauCard(const std::vector<TableauHitCandidate>& candidates) const {
-    if (candidates.empty()) return nullptr;
+    const auto& hand = model().getHand();
+    for (int i = 0; i < (int)hand.size(); ++i)
+        state.cards.push_back(makeSpec(hand[i], CardPile::Hand, i, (int)hand.size()));
 
-    auto best = [&](bool requireMatchable) -> CardModel* {
-        CardModel* pick = nullptr;
-        int bestZ = -1;
-        for (const auto& e : candidates) {
-            if (requireMatchable && !e.matchable) continue;
-            if (e.zOrder > bestZ) {
-                bestZ = e.zOrder;
-                pick = e.card;
-            }
-        }
-        return pick;
-    };
+    const auto& reserve = model().getReserve();
+    const int reserveCount = (int)reserve.size();
+    for (int i = 0; i < reserveCount; ++i)
+        state.cards.push_back(makeSpec(reserve[i], CardPile::Reserve, i, reserveCount));
 
-    if (CardModel* v = best(true)) return v;
-    return best(false);
+    if (reserveCount > 0)
+        state.reserveTopCardId = reserve.back()->getId();
+
+    for (auto* card : model().getTableau())
+        state.cards.push_back(makeSpec(card, CardPile::Tableau, 0, 0));
+
+    return state;
 }
 
 std::vector<CardModel*> GamePresenter::getDirectBlockers(CardModel* card) const {
     std::vector<CardModel*> blockers;
     if (!card) return blockers;
 
-    auto it = _slotIndex.find(card);
+    auto it = _slotIndex.find(card->getId());
     if (it == _slotIndex.end()) return blockers;
 
     const int slotIdx = it->second;
@@ -118,34 +131,38 @@ std::vector<CardModel*> GamePresenter::getDirectBlockers(CardModel* card) const 
     for (int blockerSlot : layout[slotIdx].blockedBy) {
         for (const auto& kv : _slotIndex) {
             if (kv.second != blockerSlot) continue;
-            if (model().getTableauIndex(kv.first) >= 0)
-                blockers.push_back(kv.first);
+            if (model().getTableauIndex(cardById(kv.first)) >= 0)
+                blockers.push_back(cardById(kv.first));
             break;
         }
     }
     return blockers;
 }
 
-CardModel* GamePresenter::reserveTopCard() const {
-    if (model().getReserveSize() == 0) return nullptr;
-    return model().getReserve().back();
-}
-
-bool GamePresenter::isReserveTop(CardModel* card) const {
-    return card && card == reserveTopCard();
-}
-
-bool GamePresenter::canUndo() const {
-    return controller().canUndo();
-}
-
-PresenterOutcome GamePresenter::onTableauTapped(CardModel* card) {
+PresenterOutcome GamePresenter::onTableauTapped(int cardId) {
     PresenterOutcome outcome;
-    if (!card || !card->isAccessible()) return outcome;
-    if (!controller().tryMatch(card)) return outcome;
+    CardModel* card = cardById(cardId);
+    if (!card) return outcome;
 
-    outcome.success    = true;
-    outcome.flyingCard = model().getHandTop();
+    outcome.primaryCardId = cardId;
+
+    if (!card->isAccessible()) {
+        outcome.tableauResult = TableauTapResult::Blocked;
+        for (CardModel* blocker : getDirectBlockers(card))
+            outcome.highlightCardIds.push_back(blocker->getId());
+        return outcome;
+    }
+
+    if (!controller().canTableauAction(card)) {
+        outcome.tableauResult = TableauTapResult::NoMatch;
+        return outcome;
+    }
+
+    if (!controller().tryTableauAction(card).success) return outcome;
+
+    outcome.tableauResult = TableauTapResult::Matched;
+    outcome.success       = true;
+    outcome.flyingCardId  = model().getHandTop()->getId();
     return outcome;
 }
 
@@ -153,16 +170,16 @@ PresenterOutcome GamePresenter::onReserveTapped() {
     PresenterOutcome outcome;
     if (!controller().tryDraw()) return outcome;
 
-    outcome.success    = true;
-    outcome.flyingCard = model().getHandTop();
+    outcome.success      = true;
+    outcome.flyingCardId = model().getHandTop()->getId();
     return outcome;
 }
 
 PresenterOutcome GamePresenter::onUndoTapped() {
     PresenterOutcome outcome;
-    if (!canUndo()) return outcome;
+    if (!controller().canUndo()) return outcome;
 
-    outcome.flyingCard = model().getHandTop();
+    outcome.flyingCardId = model().getHandTop()->getId();
     controller().tryUndo();
     outcome.success = true;
     return outcome;

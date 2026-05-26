@@ -1,13 +1,12 @@
-// GameScene — 主场景 View：cocos 节点、动画、触摸；布局与交互决策交给 GamePresenter
+// GameScene — 主场景 View：cocos 节点、动画、触摸
 #pragma once
 #include "cocos2d.h"
-#include <vector>
 #include <unordered_map>
 #include <memory>
 #include "presenter/GamePresenter.h"
+#include "presenter/ViewTypes.h"
 
 class CardView;
-class CardModel;
 
 class GameScene : public cocos2d::Scene {
 public:
@@ -20,14 +19,14 @@ public:
 private:
     std::unique_ptr<GamePresenter> _presenter;
 
-    std::unordered_map<CardModel*, CardView*> _cardViewMap;
+    std::unordered_map<int, CardView*> _cardViewMap;
+    std::unordered_map<int, CardPile>  _cardPileById;
 
-    std::vector<CardView*> _tableauViews;
-    std::vector<CardView*> _handViewStack;
-    std::vector<CardView*> _reserveViewStack;
+    ViewState _viewState;
+    int       _reserveTopCardId = -1;
 
-    bool      _inputLocked = false;
-    CardView* _touchTarget = nullptr;
+    bool _inputLocked       = false;
+    int  _touchTargetCardId = -1;
 
     cocos2d::Node* _restartButton   = nullptr;
     float          _restartHitHalfW = 0.f;
@@ -42,24 +41,24 @@ private:
     void setupRestartButton();
     void setupSceneTouch();
 
-    void onTableauCardClicked(CardView* view);
-    void onReserveClicked();
-    void onUndoClicked();
-    void onRestartClicked();
+    void onTableauTapped(int cardId);
+    void onReserveTapped();
+    void onUndoTapped();
+    void onRestartTapped();
 
-    void rebuildViewStacksFromModel();
-    void applyAllLayouts(bool animate, CardView* flyingView = nullptr);
-    void syncAllInteractable();
+    void applyViewState(const ViewState& state, bool animate, int flyingCardId = -1);
+    void syncPileCache(const ViewState& state);
     void updateRestartButtonVisibility();
-    void refreshViewAfterAction(const PresenterOutcome& outcome);
 
-    CardView* hitTestTableau(const cocos2d::Vec2& scenePos) const;
-    CardView* hitTestReserveTop(const cocos2d::Vec2& scenePos) const;
-    CardView* viewForCard(CardModel* card) const;
+    void handlePresenterOutcome(const PresenterOutcome& outcome);
+
+    int hitTestTableauCardId(const cocos2d::Vec2& scenePos) const;
+    int hitTestReserveTopCardId(const cocos2d::Vec2& scenePos) const;
+    CardView* viewForCardId(int cardId) const;
 
     void lockInput();
     void unlockInput();
-    void playRejectShake(CardView* view);
-    void playBlockedFeedback(CardView* view, CardModel* card);
-    void playBlockerHighlight(CardView* view);
+    void playRejectShake(int cardId);
+    void playBlockedFeedback(int cardId, const std::vector<int>& blockerIds);
+    void playBlockerHighlight(int cardId);
 };

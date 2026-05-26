@@ -1,31 +1,32 @@
-// GameController — 游戏规则入口：校验操作、创建并执行 Command、维护撤销历史栈
+// GameController — 游戏规则入口：校验操作、驱动 Model 变更，并管理撤销
 #pragma once
-#include <vector>
-#include <memory>
-#include "command/ICommand.h"
+#include "TableauActionResult.h"
+#include "cards/TableauCardHandlerRegistry.h"
+#include "history/UndoManager.h"
 
 class CardModel;
 class GameModel;
-class MatchCommand;
 class DrawCommand;
+class ICommand;
 
 class GameController {
 public:
     explicit GameController(GameModel& model);
 
-    MatchCommand* tryMatch(CardModel* tableauCard);
-    DrawCommand*  tryDraw();
-    ICommand*     tryUndo();
+    bool               canTableauAction(CardModel* tableauCard) const;
+    TableauActionResult tryTableauAction(CardModel* tableauCard);
 
-    bool canUndo() const { return !_history.empty(); }
-    bool canMatchTableau(CardModel* tableauCard) const;
+    DrawCommand* tryDraw();
+    ICommand*    tryUndo();
 
+    bool canUndo() const;
     void resetHistory();
 
-private:
-    GameModel* _model;
-    std::vector<std::unique_ptr<ICommand>> _history;
-    std::unique_ptr<ICommand> _lastUndone;
+    UndoManager&       undoManager()       { return _undo; }
+    const UndoManager& undoManager() const { return _undo; }
 
-    bool canMatch(CardModel* a, CardModel* b) const;
+private:
+    GameModel*               _model;
+    UndoManager              _undo;
+    TableauCardHandlerRegistry _tableauHandlers;
 };
